@@ -57,8 +57,8 @@ jobs:
         if: success()
         run: |
           APK_PATH=$(find src/all/nepu/build/outputs/apk/release -name "*.apk" | head -n 1)
-          cp "$APK_PATH" nepu-v${{ env.NEW_VERSION }}.apk
-          echo "SIGNED_APK=nepu-v${{ env.NEW_VERSION }}.apk" >> $GITHUB_ENV
+          cp "$APK_PATH" nepu-v${{ env.NEW_VERSION }}-c${{ env.NEW_CODE }}.apk
+          echo "SIGNED_APK=nepu-v${{ env.NEW_VERSION }}-c${{ env.NEW_CODE }}.apk" >> $GITHUB_ENV
 
       - name: Upload APK Artifact
         if: success()
@@ -90,11 +90,10 @@ jobs:
             git clone https://${{ secrets.GH_PAT }}@github.com/salmanbappi/extensions-repo.git repo_tmp
 
             PKG_NAME="eu.kanade.tachiyomi.animeextension.all.nepu"
-            TARGET_NAME="$PKG_NAME-v${{ env.NEW_VERSION }}.apk"
+            TARGET_NAME="$PKG_NAME-v${{ env.NEW_VERSION }}-c${{ env.NEW_CODE }}.apk"
 
             mkdir -p repo_tmp/apk
             cp ${{ env.SIGNED_APK }} repo_tmp/apk/$TARGET_NAME
-
             cd repo_tmp
             git config user.name "Gemini Automation"
             git config user.email "gemini@automation.bot"
