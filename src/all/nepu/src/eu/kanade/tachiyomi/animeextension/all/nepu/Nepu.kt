@@ -48,7 +48,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/movies/page/$page", headers)
 
     override fun popularAnimeSelector(): String = "div#archive-content article, div.items article, div.grid div.item, .movie-item, .anime-item, article.item, article.w_item_a"
 
@@ -67,7 +67,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // =============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/movies/page/$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/tvshows/page/$page", headers)
 
     override fun latestUpdatesSelector(): String = "div.content article, " + popularAnimeSelector()
 
