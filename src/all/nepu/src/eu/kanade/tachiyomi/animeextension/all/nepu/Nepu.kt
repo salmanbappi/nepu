@@ -47,34 +47,35 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/trending?page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
 
-    override fun popularAnimeSelector(): String = "div.grid div.item, div.items article, .movie-item, .anime-item, article.item"
+    override fun popularAnimeSelector(): String = "div.items article, div.grid div.item, .movie-item, .anime-item, article.item, article.w_item_a"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a")!!
         setUrlWithoutDomain(link.attr("href"))
         title = element.selectFirst("h2, h3, .title, .name")?.text() ?: link.attr("title") ?: ""
-        thumbnail_url = element.selectFirst("img")?.attr("abs:src")?.ifEmpty { element.selectFirst("img")?.attr("abs:data-src") } ?: ""
+        val img = element.selectFirst("img")
+        thumbnail_url = img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
     }
 
-    override fun popularAnimeNextPageSelector(): String = "nav a:contains(Next), .pagination a[rel=next], a.next"
+    override fun popularAnimeNextPageSelector(): String? = "nav a:contains(Next), .pagination a[rel=next], a.next, div.resppages > a > span.fa-chevron-right"
 
     // =============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/latest-updates?page=$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/movies/page/$page", headers)
 
-    override fun latestUpdatesSelector(): String = popularAnimeSelector()
+    override fun latestUpdatesSelector(): String = "div.content article, " + popularAnimeSelector()
 
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector(): String = popularAnimeNextPageSelector()
+    override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
 
     // =============================== Search ===============================
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         if (query.isNotEmpty()) {
-            return GET("$baseUrl/search?q=$query&page=$page", headers)
+            return GET("$baseUrl/page/$page/?s=$query", headers)
         }
 
         val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
@@ -82,22 +83,22 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
         if (genreFilter != null && genreFilter.state != 0) {
             val genreSlug = genreFilter.toSlug()
-            return GET("$baseUrl/category/$genreSlug?page=$page", headers)
+            return GET("$baseUrl/category/$genreSlug/page/$page", headers)
         }
 
         if (typeFilter != null && typeFilter.state != 0) {
             val typeSlug = typeFilter.toSlug()
-            return GET("$baseUrl/$typeSlug?page=$page", headers)
+            return GET("$baseUrl/$typeSlug/page/$page", headers)
         }
 
         return popularAnimeRequest(page)
     }
 
-    override fun searchAnimeSelector(): String = popularAnimeSelector()
+    override fun searchAnimeSelector(): String = "div.result-item, " + popularAnimeSelector()
 
     override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
+    override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val response = client.newCall(searchAnimeRequest(page, query, filters)).execute()
@@ -117,10 +118,12 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     // =========================== Anime Details ============================
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        title = document.selectFirst("h1.title, .entry-title, .m-title")?.text() ?: ""
-        description = document.selectFirst(".description, .entry-content p, .storyline")?.text()
-        genre = document.select(".genres a, .entry-content .genre a, .ganre-wrapper a").joinToString { it.text() }
+        val sheader = document.selectFirst("div.sheader")
+        title = sheader?.selectFirst("div.data > h1")?.text() ?: document.selectFirst("h1.title, .entry-title, .m-title")?.text() ?: ""
+        description = document.selectFirst("div#info p, .description, .entry-content p, .storyline")?.text()
+        genre = document.select("div.sgeneros a, .genres a, .entry-content .genre a, .ganre-wrapper a").joinToString { it.text() }
         status = SAnime.UNKNOWN
+        thumbnail_url = sheader?.selectFirst("div.poster img")?.attr("abs:src") ?: document.selectFirst(".poster img")?.attr("abs:src") ?: ""
     }
 
     // ============================== Episodes ==============================
@@ -135,8 +138,25 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         episode_number = parseEpisodeNumber(name)
     }
 
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val doc = response.asJsoup()
+        val seasons = doc.select("div#seasons > div")
+        return if (seasons.isEmpty()) {
+            super.episodeListParse(response)
+        } else {
+            seasons.flatMap { season ->
+                val seasonName = season.selectFirst("span.se-t")?.text() ?: ""
+                season.select(episodeListSelector()).map { element ->
+                    episodeFromElement(element).apply {
+                        name = if (seasonName.isNotEmpty()) "$seasonName - $name" else name
+                    }
+                }
+            }.reversed()
+        }
+    }
+
     private fun parseEpisodeNumber(text: String): Float {
-        return Regex("""(?i)(?:Episode|Ep|E|Vol)\.?\s*(\d+(\.\d+)?)""").find(text)
+        return Regex("""(?i)(?:Episode|Ep|E|Vol|Temporada)\.?\s*(\d+(\.\d+)?)""").find(text)
             ?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
     }
 
