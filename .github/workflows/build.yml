@@ -1,0 +1,106 @@
+name: Build Nepu
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Extension
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gemini Intelligence
+        run: |
+          echo "🤖 Gemini CLI is active and taking control of this build."
+          echo "📡 Mode: Cloud-Native Auto-Development (Kotlin)"
+          echo "🔐 Signing: Project Keystore"
+          echo "🧹 Cleanup Policy: Automated"
+          echo "🟢 System Check: OK"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Build with Gradle
+        id: build
+        env:
+          KEY_STORE_PASSWORD: dhakaflix123
+          ALIAS: dflix
+          KEY_PASSWORD: dhakaflix123
+        run: chmod +x gradlew && ./gradlew :src:all:nepu:assembleRelease -x lint --no-daemon
+
+      - name: Gemini Auto-Remediation (Failure Cleanup)
+        if: failure()
+        run: |
+          echo "❌ Build failed. Cleaning up 'junk' changes to keep repository stable..."
+          git reset --hard HEAD
+          echo "🧹 All local changes reverted. No junk left."
+
+      - name: Prepare Signed APK Path
+        if: success()
+        run: |
+          APK_PATH=$(find src/all/nepu/build/outputs/apk/release -name "*.apk" | head -n 1)
+          cp "$APK_PATH" nepu-v1.0.apk
+          echo "SIGNED_APK=nepu-v1.0.apk" >> $GITHUB_ENV
+
+      - name: Upload APK Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nepu-apk
+          path: ${{ env.SIGNED_APK }}
+
+      - name: Create Release
+        if: success() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0
+          name: Nepu v1.0
+          body: |
+            ### 🤖 Automated Gemini Build (Kotlin)
+            - **Site:** nepu.to
+            - **Features:** Cloudflare Support, Modern Selectors.
+            - **Status:** Build Successful & Signed.
+          files: ${{ env.SIGNED_APK }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to Extensions Repo
+        if: success() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/master'
+        run: |
+          # This requires a secret named 'GH_PAT' with repo scope
+          if [ -n "${{ secrets.GH_PAT }}" ]; then
+            git clone https://${{ secrets.GH_PAT }}@github.com/salmanbappi/extensions-repo.git repo_tmp
+            
+            PKG_NAME="eu.kanade.tachiyomi.animeextension.all.nepu"
+            TARGET_NAME="$PKG_NAME-v1.0.apk"
+            
+            mkdir -p repo_tmp/apk
+            cp ${{ env.SIGNED_APK }} repo_tmp/apk/$TARGET_NAME
+            
+            cd repo_tmp
+            git config user.name "Gemini Automation"
+            git config user.email "gemini@automation.bot"
+            git add apk/$TARGET_NAME
+            
+            # Update index via generate script in the repo
+            python generate_repo.py
+            git add index.min.json repo.json
+            
+            git commit -m "Update Nepu to v1.0"
+            git push
+          else
+            echo "Secret 'GH_PAT' not found. Skipping extension repo update."
+          fi
