@@ -48,7 +48,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/movies/page/$page", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/discovery/page/$page", headers)
 
     override fun popularAnimeSelector(): String = "div#archive-content article, div.items article, div.grid div.item, .movie-item, .anime-item, article.item, article.w_item_a"
 
@@ -67,7 +67,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // =============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/tvshows/page/$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/new-releases/page/$page", headers)
 
     override fun latestUpdatesSelector(): String = "div.content article, " + popularAnimeSelector()
 
@@ -82,14 +82,19 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             return GET("$baseUrl/page/$page/?s=$query", headers)
         }
 
-        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
-        val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
+        val listingFilter = filters.filterIsInstance<ListingFilter>().firstOrNull()
+        if (listingFilter != null && listingFilter.state != 0) {
+            val path = listingFilter.toPath()
+            return GET("$baseUrl/$path/page/$page", headers)
+        }
 
+        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
         if (genreFilter != null && genreFilter.state != 0) {
             val genreSlug = genreFilter.toSlug()
             return GET("$baseUrl/category/$genreSlug/page/$page", headers)
         }
 
+        val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
         if (typeFilter != null && typeFilter.state != 0) {
             val typeSlug = typeFilter.toSlug()
             return GET("$baseUrl/$typeSlug/page/$page", headers)
@@ -178,10 +183,26 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     // ============================== Filters ==============================
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        ListingFilter(),
+        AnimeFilter.Separator(),
         TypeFilter(),
         AnimeFilter.Separator(),
         GenreFilter(),
     )
+
+    private class ListingFilter : AnimeFilter.Select<String>(
+        "Listing",
+        arrayOf("Default", "Discovery", "New Releases", "Latest Movies", "Latest TV Shows", "Trending")
+    ) {
+        fun toPath() = when (state) {
+            1 -> "discovery"
+            2 -> "new-releases"
+            3 -> "movies"
+            4 -> "tvshows"
+            5 -> "trending"
+            else -> ""
+        }
+    }
 
     private class TypeFilter : AnimeFilter.Select<String>(
         "Type",
