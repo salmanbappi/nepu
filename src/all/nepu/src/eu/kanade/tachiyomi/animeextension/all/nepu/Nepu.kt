@@ -85,8 +85,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val response = client.newCall(searchAnimeRequest(page, query, filters)).execute()
         val pageResults = searchAnimeParse(response)
-        val sortedList = pageResults.animes.sortedByDescending { 
-            diceCoefficient(it.title.lowercase(), query.lowercase()) 
+        val sortedList = pageResults.animes.sortedByDescending {
+            diceCoefficient(it.title.lowercase(), query.lowercase())
         }
         return AnimesPage(sortedList, pageResults.hasNextPage)
     }
@@ -148,3 +148,4 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 }
+
