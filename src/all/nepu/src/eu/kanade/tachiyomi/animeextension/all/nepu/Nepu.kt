@@ -38,7 +38,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(Injekt.get()))
+        .addInterceptor(CloudflareInterceptor(network.client))
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
