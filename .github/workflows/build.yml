@@ -36,9 +36,9 @@ jobs:
       - name: Build with Gradle
         id: build
         env:
-          KEY_STORE_PASSWORD: dhakaflix123
-          ALIAS: dflix
-          KEY_PASSWORD: dhakaflix123
+          KEY_STORE_PASSWORD: salman2005
+          ALIAS: nepu
+          KEY_PASSWORD: salman2005
         run: chmod +x gradlew && ./gradlew :src:all:nepu:assembleRelease -x lint -x lintKotlin --no-daemon
 
       - name: Gemini Auto-Remediation (Failure Cleanup)
