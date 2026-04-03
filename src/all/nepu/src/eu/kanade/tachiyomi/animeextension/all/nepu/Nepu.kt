@@ -32,7 +32,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override val supportsLatest = true
 
-    override val id: Long = 5181466391484419848L
+    override val id: Long = 5181466391484419855L
 
     private val preferences: SharedPreferences by lazy {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)

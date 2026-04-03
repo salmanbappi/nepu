@@ -1,5 +1,5 @@
 #!/bin/bash
-BUILD_GRADLE="src/all/udvash/build.gradle"
+BUILD_GRADLE="src/all/nepu/build.gradle"
 
 if [ ! -f "$BUILD_GRADLE" ]; then
     echo "Error: $BUILD_GRADLE not found!"
