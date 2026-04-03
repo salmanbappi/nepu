@@ -43,19 +43,19 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/discovery/page/$page", headers)
 
-    override fun popularAnimeSelector(): String = "div#archive-content article, div.items article, div.grid div.item, .movie-item, .anime-item, article.item, article.w_item_a"
+    override fun popularAnimeSelector(): String = "div.jws-post-item, div.items article, div.grid div.item, .movie-item, .anime-item, article.item, article.w_item_a, .jws-post-wrapper"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a")!!
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst("h2, h3, .title, .name")?.text() 
+        title = element.selectFirst("h2, h3, .title, .name, .jws-post-title")?.text() 
             ?: element.selectFirst("img")?.attr("alt")
             ?: link.attr("title") 
             ?: ""
@@ -67,7 +67,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // =============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/new-releases/page/$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/trending/page/$page", headers)
 
     override fun latestUpdatesSelector(): String = "div.content article, " + popularAnimeSelector()
 
@@ -128,7 +128,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         val sheader = document.selectFirst("div.sheader")
-        title = sheader?.selectFirst("div.data > h1")?.text() ?: document.selectFirst("h1.title, .entry-title, .m-title")?.text() ?: ""
+        title = sheader?.selectFirst("div.data > h1")?.text() ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title")?.text() ?: ""
         description = document.selectFirst("div#info p, .description, .entry-content p, .storyline")?.text()
         genre = document.select("div.sgeneros a, .genres a, .entry-content .genre a, .ganre-wrapper a").joinToString { it.text() }
         status = SAnime.UNKNOWN
@@ -192,14 +192,14 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     private class ListingFilter : AnimeFilter.Select<String>(
         "Listing",
-        arrayOf("Default", "Discovery", "New Releases", "Latest Movies", "Latest TV Shows", "Trending")
+        arrayOf("Default", "Discovery", "Trending", "New Releases", "Latest Movies", "Latest TV Shows")
     ) {
         fun toPath() = when (state) {
             1 -> "discovery"
-            2 -> "new-releases"
-            3 -> "movies"
-            4 -> "tvshows"
-            5 -> "trending"
+            2 -> "trending"
+            3 -> "new-releases"
+            4 -> "movies"
+            5 -> "tvshows"
             else -> ""
         }
     }
