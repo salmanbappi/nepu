@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.SharedPreferences
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -73,7 +74,24 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     // =============================== Search ===============================
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return GET("$baseUrl/search?q=$query&page=$page", headers)
+        if (query.isNotEmpty()) {
+            return GET("$baseUrl/search?q=$query&page=$page", headers)
+        }
+
+        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
+        val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
+
+        if (genreFilter != null && genreFilter.state != 0) {
+            val genreSlug = genreFilter.toSlug()
+            return GET("$baseUrl/category/$genreSlug?page=$page", headers)
+        }
+
+        if (typeFilter != null && typeFilter.state != 0) {
+            val typeSlug = typeFilter.toSlug()
+            return GET("$baseUrl/$typeSlug?page=$page", headers)
+        }
+
+        return popularAnimeRequest(page)
     }
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
@@ -85,10 +103,16 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val response = client.newCall(searchAnimeRequest(page, query, filters)).execute()
         val pageResults = searchAnimeParse(response)
-        val sortedList = pageResults.animes.sortedByDescending {
-            diceCoefficient(it.title.lowercase(), query.lowercase())
+
+        val filteredList = if (query.isNotEmpty()) {
+            pageResults.animes.sortedByDescending {
+                diceCoefficient(it.title.lowercase(), query.lowercase())
+            }
+        } else {
+            pageResults.animes
         }
-        return AnimesPage(sortedList, pageResults.hasNextPage)
+
+        return AnimesPage(filteredList, pageResults.hasNextPage)
     }
 
     // =========================== Anime Details ============================
@@ -128,6 +152,32 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
 
+    // ============================== Filters ==============================
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        TypeFilter(),
+        AnimeFilter.Separator(),
+        GenreFilter(),
+    )
+
+    private class TypeFilter : AnimeFilter.Select<String>(
+        "Type",
+        arrayOf("All", "Movies", "TV Shows")
+    ) {
+        fun toSlug() = when (state) {
+            1 -> "movies"
+            2 -> "tvshows"
+            else -> ""
+        }
+    }
+
+    private class GenreFilter : AnimeFilter.Select<String>(
+        "Genre",
+        GENRES.map { it.first }.toTypedArray()
+    ) {
+        fun toSlug() = GENRES[state].second
+    }
+
     // ============================== Utils ==============================
 
     private fun diceCoefficient(s1: String, s2: String): Double {
@@ -147,5 +197,30 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     // ============================== Settings ==============================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
-}
 
+    companion object {
+        private val GENRES = arrayOf(
+            "All" to "",
+            "Action" to "action",
+            "Adventure" to "adventure",
+            "Animation" to "animation",
+            "Anime" to "anime",
+            "Comedy" to "comedy",
+            "Crime" to "crime",
+            "Documentary" to "documentary",
+            "Drama" to "drama",
+            "Family" to "family",
+            "Fantasy" to "fantasy",
+            "History" to "history",
+            "Horror" to "horror",
+            "Music" to "music",
+            "Mystery" to "mystery",
+            "Romance" to "romance",
+            "Science Fiction" to "sci-fi",
+            "Thriller" to "thriller",
+            "TV Movie" to "tv-movie",
+            "War" to "war",
+            "Western" to "western"
+        )
+    }
+}
