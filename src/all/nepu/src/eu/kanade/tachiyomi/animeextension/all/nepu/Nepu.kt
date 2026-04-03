@@ -50,12 +50,15 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
 
-    override fun popularAnimeSelector(): String = "div.items article, div.grid div.item, .movie-item, .anime-item, article.item, article.w_item_a"
+    override fun popularAnimeSelector(): String = "div#archive-content article, div.items article, div.grid div.item, .movie-item, .anime-item, article.item, article.w_item_a"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a")!!
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst("h2, h3, .title, .name")?.text() ?: link.attr("title") ?: ""
+        title = element.selectFirst("h2, h3, .title, .name")?.text() 
+            ?: element.selectFirst("img")?.attr("alt")
+            ?: link.attr("title") 
+            ?: ""
         val img = element.selectFirst("img")
         thumbnail_url = img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
     }
@@ -95,7 +98,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         return popularAnimeRequest(page)
     }
 
-    override fun searchAnimeSelector(): String = "div.result-item, " + popularAnimeSelector()
+    override fun searchAnimeSelector(): String = "div.result-item article, div.result-item, " + popularAnimeSelector()
 
     override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
