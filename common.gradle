@@ -45,6 +45,7 @@ android {
                 appName : "Aniyomi: $extName",
                 extClass: extClass,
                 nsfw    : project.ext.find("isNsfw") ? 1 : 0,
+                author  : project.ext.find("author") ?: "@salmanbappi",
         ]
         String baseUrl = project.ext.find("baseUrl") ?: ""
         if (theme != null && !baseUrl.isEmpty()) {
