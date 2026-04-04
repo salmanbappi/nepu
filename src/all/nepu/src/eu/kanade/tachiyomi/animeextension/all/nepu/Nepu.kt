@@ -53,17 +53,27 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         return GET("$baseUrl/$path/", headers) // Added trailing slash for stability
     }
 
-    override fun popularAnimeSelector(): String = ".jws-post-wrapper, .movie-item, .anime-item, .item, .w_item_a, .post-item, article.post"
+    override fun popularAnimeSelector(): String = ".list-movie, .list-episode, .jws-post-wrapper, .movie-item, .anime-item, .item, .w_item_a, .post-item, article.post"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a") ?: element
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst(".jws-post-title, h2, h3, .title, .name")?.text() 
+        title = element.selectFirst(".list-title, .jws-post-title, h2, h3, .title, .name")?.text() 
             ?: element.selectFirst("img")?.attr("alt")
             ?: link.attr("title") 
             ?: ""
-        val img = element.selectFirst("img")
-        thumbnail_url = img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
+        
+        val style = element.selectFirst(".media, .list-media, .poster, .thumb")?.attr("style") ?: ""
+        thumbnail_url = if (style.contains("url(")) {
+            style.substringAfter("url(").substringBefore(")")
+                .replace("'", "")
+                .replace("\"", "")
+                .trim()
+                .let { if (it.startsWith("http")) it else if (it.startsWith("//")) "https:$it" else "$baseUrl$it" }
+        } else {
+            val img = element.selectFirst("img")
+            img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
+        }
     }
 
     override fun popularAnimeNextPageSelector(): String? = ".pagination a.next, a.next, .next.page-numbers"
@@ -150,34 +160,49 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     // =========================== Anime Details ============================
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        val sheader = document.selectFirst("div.sheader")
-        title = sheader?.selectFirst("div.data > h1")?.text() ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title")?.text() ?: ""
-        description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2")?.text()
-        genre = document.select("div.sgeneros a, .genres a, .entry-content .genre a, .ganre-wrapper a").joinToString { it.text() }
+        val sheader = document.selectFirst("div.sheader, div.detail-content")
+        title = sheader?.selectFirst("div.data > h1, div.caption h1")?.text() 
+            ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title, h1")?.text() ?: ""
+        description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2, div.detail div.text")?.text()
+        genre = document.select("div.sgeneros a, .genres a, .entry-content .genre a, .ganre-wrapper a, div.video-attr:contains(Genre) a").joinToString { it.text() }
         status = SAnime.UNKNOWN
-        thumbnail_url = sheader?.selectFirst("div.poster img")?.attr("abs:src") ?: document.selectFirst(".poster img")?.attr("abs:src") ?: ""
+        thumbnail_url = sheader?.selectFirst("div.poster img, .media-poster, .media-cover")?.let {
+            val style = it.attr("style")
+            if (style.contains("url(")) {
+                style.substringAfter("url(").substringBefore(")")
+                    .replace("'", "")
+                    .replace("\"", "")
+                    .trim()
+                    .let { url -> if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "$baseUrl$url" }
+            } else {
+                it.attr("abs:src")
+            }
+        } ?: document.selectFirst(".poster img")?.attr("abs:src") ?: ""
     }
 
     // ============================== Episodes ==============================
 
-    override fun episodeListSelector(): String = "ul.episodios li, .list-episodes a, .ep-item, .episode-item"
+    override fun episodeListSelector(): String = "ul.episodios li, .list-episodes a, .ep-item, .episode-item, .episodes.tab-content a"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
         setUrlWithoutDomain(link.attr("href"))
-        val epTitle = element.selectFirst("span, .name, .ep-title")?.text() ?: element.text()
+        val epTitle = element.selectFirst("span, .name, .ep-title, .episode")?.text() ?: element.text()
         name = epTitle.trim().ifEmpty { "Episode 1" }
         episode_number = parseEpisodeNumber(name)
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = response.asJsoup()
-        val seasons = doc.select("div#seasons > div")
+        val seasons = doc.select("div#seasons > div, div.season-list div.tab-pane")
         return if (seasons.isEmpty()) {
             super.episodeListParse(response)
         } else {
             seasons.flatMap { season ->
-                val seasonName = season.selectFirst("span.se-t")?.text() ?: ""
+                val seasonId = season.attr("id")
+                val seasonName = doc.selectFirst("a[href='#$seasonId']")?.text() 
+                    ?: season.selectFirst("span.se-t")?.text() 
+                    ?: ""
                 season.select(episodeListSelector()).map { element ->
                     episodeFromElement(element).apply {
                         name = if (seasonName.isNotEmpty()) "$seasonName - $name" else name
@@ -186,6 +211,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             }.reversed()
         }
     }
+
 
     private fun parseEpisodeNumber(text: String): Float {
         return Regex("""(?i)(?:Episode|Ep|E|Vol|Temporada)\.?\s*(\d+(\.\d+)?)""").find(text)
