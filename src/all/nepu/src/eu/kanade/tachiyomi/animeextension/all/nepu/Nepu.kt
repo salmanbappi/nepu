@@ -77,31 +77,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // =============================== Search ===============================
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        if (query.isNotEmpty()) {
-            return GET("$baseUrl/page/$page/?s=$query", headers)
-        }
-
-        val listingFilter = filters.filterIsInstance<ListingFilter>().firstOrNull()
-        if (listingFilter != null && listingFilter.state != 0) {
-            val path = listingFilter.toPath()
-            return GET("$baseUrl/$path/page/$page", headers)
-        }
-
-        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
-        if (genreFilter != null && genreFilter.state != 0) {
-            val genreSlug = genreFilter.toSlug()
-            return GET("$baseUrl/category/$genreSlug/page/$page", headers)
-        }
-
-        val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
-        if (typeFilter != null && typeFilter.state != 0) {
-            val typeSlug = typeFilter.toSlug()
-            return GET("$baseUrl/$typeSlug/page/$page", headers)
-        }
-
-        return popularAnimeRequest(page)
-    }
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = throw UnsupportedOperationException()
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
 
@@ -110,18 +86,59 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        val response = client.newCall(searchAnimeRequest(page, query, filters)).execute()
-        val pageResults = searchAnimeParse(response)
+        if (query.isNotEmpty()) {
+            val homeResponse = client.newCall(GET(baseUrl, headers)).execute()
+            val homeDoc = homeResponse.asJsoup()
+            val token = homeDoc.selectFirst("input[name=_TOKEN]")?.attr("value")
+                ?: throw Exception("Failed to find search token")
 
-        val filteredList = if (query.isNotEmpty()) {
-            pageResults.animes.sortedByDescending {
+            val searchBody = okhttp3.FormBody.Builder()
+                .add("_TOKEN", token)
+                .add("_ACTION", "search")
+                .add("q", query)
+                .build()
+
+            val searchRequest = Request.Builder()
+                .url("$baseUrl/search")
+                .post(searchBody)
+                .headers(headers)
+                .addHeader("Origin", baseUrl)
+                .addHeader("Referer", "$baseUrl/")
+                .build()
+
+            val response = client.newCall(searchRequest).execute()
+            val pageResults = searchAnimeParse(response)
+
+            val filteredList = pageResults.animes.sortedByDescending {
                 diceCoefficient(it.title.lowercase(), query.lowercase())
             }
-        } else {
-            pageResults.animes
+
+            return AnimesPage(filteredList, pageResults.hasNextPage)
         }
 
-        return AnimesPage(filteredList, pageResults.hasNextPage)
+        val listingFilter = filters.filterIsInstance<ListingFilter>().firstOrNull()
+        if (listingFilter != null && listingFilter.state != 0) {
+            val path = listingFilter.toPath()
+            val response = client.newCall(GET("$baseUrl/$path/page/$page", headers)).execute()
+            return searchAnimeParse(response)
+        }
+
+        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
+        if (genreFilter != null && genreFilter.state != 0) {
+            val genreSlug = genreFilter.toSlug()
+            val response = client.newCall(GET("$baseUrl/category/$genreSlug/page/$page", headers)).execute()
+            return searchAnimeParse(response)
+        }
+
+        val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
+        if (typeFilter != null && typeFilter.state != 0) {
+            val typeSlug = typeFilter.toSlug()
+            val response = client.newCall(GET("$baseUrl/$typeSlug/page/$page", headers)).execute()
+            return searchAnimeParse(response)
+        }
+
+        val response = client.newCall(popularAnimeRequest(page)).execute()
+        return searchAnimeParse(response)
     }
 
     // =========================== Anime Details ============================
