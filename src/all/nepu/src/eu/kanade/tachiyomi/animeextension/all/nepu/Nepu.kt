@@ -63,7 +63,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             ?: link.attr("title") 
             ?: ""
         
-        val style = element.selectFirst(".media, .list-media, .poster, .thumb")?.attr("style") ?: ""
+        val styleElement = element.selectFirst("[style*='url(']") ?: element.selectFirst(".media, .list-media, .poster, .thumb") ?: element
+        val style = styleElement.attr("style") ?: ""
         thumbnail_url = if (style.contains("url(")) {
             style.substringAfter("url(").substringBefore(")")
                 .replace("'", "")
@@ -166,7 +167,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2, div.detail div.text")?.text()
         genre = document.select("div.sgeneros a, .genres a, .entry-content .genre a, .ganre-wrapper a, div.video-attr:contains(Genre) a").joinToString { it.text() }
         status = SAnime.UNKNOWN
-        thumbnail_url = sheader?.selectFirst("div.poster img, .media-poster, .media-cover")?.let {
+        thumbnail_url = sheader?.selectFirst("[style*='url('], div.poster img, .media-poster, .media-cover")?.let {
             val style = it.attr("style")
             if (style.contains("url(")) {
                 style.substringAfter("url(").substringBefore(")")
@@ -196,7 +197,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val doc = response.asJsoup()
         val seasons = doc.select("div#seasons > div, div.season-list div.tab-pane")
         return if (seasons.isEmpty()) {
-            super.episodeListParse(response)
+            doc.select(episodeListSelector()).map { episodeFromElement(it) }
         } else {
             seasons.flatMap { season ->
                 val seasonId = season.attr("id")
