@@ -43,14 +43,14 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.3 Aniyomi/0.15.3")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
 
     override fun popularAnimeRequest(page: Int): Request {
         val path = if (page == 1) "discovery" else "discovery/page/$page"
-        return GET("$baseUrl/$path/", headers) // Added trailing slash for stability
+        return GET("$baseUrl/$path/", headers)
     }
 
     override fun popularAnimeSelector(): String = ".list-movie, .list-episode, .jws-post-wrapper, .movie-item, .anime-item, .item, .w_item_a, .post-item, article.post"
@@ -62,29 +62,14 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             ?: element.selectFirst("img")?.attr("alt")
             ?: link.attr("title") 
             ?: ""
-        
-        val styleElement = element.selectFirst("[style*='url(']") ?: element.selectFirst(".media, .list-media, .poster, .thumb") ?: element
-        val style = styleElement.attr("style") ?: ""
-        thumbnail_url = if (style.contains("url(")) {
-            // More robust regex to handle missing closing parens or extra quotes/escaping
-            Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
-                ?.trim()
-                ?.let { if (it.startsWith("http")) it else if (it.startsWith("//")) "https:$it" else "$baseUrl$it" }
-                ?: ""
-        } else {
-            val img = element.selectFirst("img")
-            img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
-        }
+        thumbnail_url = element.extractImageUrl()
     }
 
-    override fun popularAnimeNextPageSelector(): String? = ".pagination a.next, a.next, .next.page-numbers"
+    override fun popularAnimeNextPageSelector(): String? = ".pagination a[title=Next], a[title=Next], a[title=next], .pagination a.next, a.next, .next.page-numbers, a.page-link:contains(Next)"
 
     // =============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        val path = if (page == 1) "discovery" else "discovery/page/$page"
-        return GET("$baseUrl/$path/", headers)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
@@ -161,26 +146,20 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     // =========================== Anime Details ============================
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        val sheader = document.selectFirst("div.sheader, div.detail-content")
-        title = sheader?.selectFirst("div.data > h1, div.caption h1")?.text() 
+        val sheader = document.selectFirst("div.sheader, div.detail-content, .detail-header")
+        title = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text() 
             ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title, h1")?.text() ?: ""
-        description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2, div.detail div.text")?.text()
+        description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2, div.detail div.text, meta[name='description']")?.let {
+            if (it.tagName() == "meta") it.attr("content") else it.text()
+        }
         genre = document.select("div.sgeneros a, .genres a, .entry-content .genre a, .ganre-wrapper a, div.video-attr:contains(Genre) a").joinToString { it.text() }
         status = SAnime.UNKNOWN
-        thumbnail_url = sheader?.selectFirst("[style*='url('], div.poster img, .media-poster, .media-cover")?.let {
-            val style = it.attr("style")
-            if (style.contains("url(")) {
-                Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
-                    ?.trim()?.let { url -> if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "$baseUrl$url" }
-            } else {
-                it.attr("abs:src")
-            }
-        } ?: document.selectFirst(".poster img")?.attr("abs:src") ?: ""
+        thumbnail_url = sheader?.extractImageUrl() ?: document.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
     }
 
     // ============================== Episodes ==============================
 
-    override fun episodeListSelector(): String = "ul.episodios li, .list-episodes a, .ep-item, .episode-item, .episodes.tab-content a, .tab-pane a"
+    override fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
@@ -192,26 +171,37 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = response.asJsoup()
-        val seasons = doc.select("div#seasons > div, div.season-list div.tab-pane")
-        return if (seasons.isEmpty()) {
-            doc.select(episodeListSelector()).map { episodeFromElement(it) }
-        } else {
-            seasons.flatMap { season ->
-                val seasonId = season.attr("id")
-                val seasonName = doc.selectFirst("a[href='#$seasonId']")?.text() 
-                    ?: season.selectFirst("span.se-t")?.text() 
-                    ?: ""
-                // Avoid recursive selectors inside the tab-pane
-                val episodes = season.select("a").filter { it.attr("href").contains("/episode/") }
-                episodes.map { element ->
-                    episodeFromElement(element).apply {
-                        name = if (seasonName.isNotEmpty()) "$seasonName - $name" else name
-                    }
-                }
-            }.reversed()
+        val seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
+        if (seasons.isEmpty()) {
+            val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") }
+            if (episodes.isNotEmpty()) {
+                return episodes.map { episodeFromElement(it) }.distinctBy { it.url }.reversed()
+            }
+            // Movie fallback
+            val playButton = doc.selectFirst("a[href*='/episode/'], a.btn-play, a.watch-now, .play-btn a, a:contains(Watch Now)")
+            if (playButton != null) {
+                return listOf(SEpisode.create().apply {
+                    name = "Movie"
+                    setUrlWithoutDomain(playButton.attr("href"))
+                    episode_number = 1f
+                })
+            }
+            return emptyList()
         }
+        
+        return seasons.flatMap { season ->
+            val seasonId = season.attr("id")
+            val seasonName = if (seasonId.isNotEmpty()) doc.selectFirst("a[href='#$seasonId']")?.text() else null
+                ?: season.selectFirst("span.se-t")?.text() 
+                ?: ""
+            val episodes = season.select("a").filter { it.attr("href").contains("/episode/") }
+            episodes.map { element ->
+                episodeFromElement(element).apply {
+                    name = if (seasonName.isNotEmpty()) "$seasonName - $name" else name
+                }
+            }
+        }.distinctBy { it.url }.reversed()
     }
-
 
     private fun parseEpisodeNumber(text: String): Float {
         return Regex("""(?i)(?:Episode|Ep|E|Vol|Temporada)\.?\s*(\d+(\.\d+)?)""").find(text)
@@ -220,7 +210,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================ Video Links =============================
 
-    override fun videoListSelector(): String = "div.source-box iframe, iframe, .player-iframe"
+    override fun videoListSelector(): String = "div.source-box iframe, iframe, .player-iframe, #player iframe"
 
     override fun videoFromElement(element: Element): Video {
         val url = element.attr("abs:src").ifEmpty { element.attr("abs:data-src") }
@@ -241,14 +231,13 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     private class ListingFilter : AnimeFilter.Select<String>(
         "Listing",
-        arrayOf("Discovery", "Trending Now", "Latest Movies", "Latest TV Shows", "New Releases")
+        arrayOf("Discovery", "Trending Now", "Latest Movies", "Latest TV Shows")
     ) {
         fun toPath() = when (state) {
             0 -> "discovery"
             1 -> "trending"
             2 -> "movies"
             3 -> "tvshows"
-            4 -> "new-releases"
             else -> "discovery"
         }
     }
@@ -272,6 +261,21 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     // ============================== Utils ==============================
+
+    private fun Element.extractImageUrl(): String {
+        val styleElement = selectFirst("[style*='url(']") ?: selectFirst(".media, .list-media, .poster, .thumb") ?: this
+        val style = styleElement.attr("style")
+        if (style.contains("url(")) {
+            val url = Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
+                ?: style.substringAfter("url(").substringBefore(")")
+                    .replace("'", "").replace("\"", "").replace("&quot;", "").trim()
+            if (url.isNotEmpty()) {
+                return if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "https://${baseUrl.substringAfter("://")}/${url.removePrefix("/")}"
+            }
+        }
+        val img = selectFirst("img")
+        return img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
+    }
 
     private fun diceCoefficient(s1: String, s2: String): Double {
         val n1 = s1.length
