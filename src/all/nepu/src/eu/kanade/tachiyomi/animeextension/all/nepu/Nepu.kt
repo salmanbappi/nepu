@@ -66,11 +66,11 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val styleElement = element.selectFirst("[style*='url(']") ?: element.selectFirst(".media, .list-media, .poster, .thumb") ?: element
         val style = styleElement.attr("style") ?: ""
         thumbnail_url = if (style.contains("url(")) {
-            style.substringAfter("url(").substringBefore(")")
-                .replace("'", "")
-                .replace("\"", "")
-                .trim()
-                .let { if (it.startsWith("http")) it else if (it.startsWith("//")) "https:$it" else "$baseUrl$it" }
+            // More robust regex to handle missing closing parens or extra quotes/escaping
+            Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
+                ?.trim()
+                ?.let { if (it.startsWith("http")) it else if (it.startsWith("//")) "https:$it" else "$baseUrl$it" }
+                ?: ""
         } else {
             val img = element.selectFirst("img")
             img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
@@ -82,7 +82,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     // =============================== Latest ===============================
 
     override fun latestUpdatesRequest(page: Int): Request {
-        val path = if (page == 1) "new-releases" else "new-releases/page/$page"
+        val path = if (page == 1) "discovery" else "discovery/page/$page"
         return GET("$baseUrl/$path/", headers)
     }
 
@@ -170,11 +170,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         thumbnail_url = sheader?.selectFirst("[style*='url('], div.poster img, .media-poster, .media-cover")?.let {
             val style = it.attr("style")
             if (style.contains("url(")) {
-                style.substringAfter("url(").substringBefore(")")
-                    .replace("'", "")
-                    .replace("\"", "")
-                    .trim()
-                    .let { url -> if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "$baseUrl$url" }
+                Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
+                    ?.trim()?.let { url -> if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "$baseUrl$url" }
             } else {
                 it.attr("abs:src")
             }
@@ -183,7 +180,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListSelector(): String = "ul.episodios li, .list-episodes a, .ep-item, .episode-item, .episodes.tab-content a"
+    override fun episodeListSelector(): String = "ul.episodios li, .list-episodes a, .ep-item, .episode-item, .episodes.tab-content a, .tab-pane a"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
@@ -204,7 +201,9 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val seasonName = doc.selectFirst("a[href='#$seasonId']")?.text() 
                     ?: season.selectFirst("span.se-t")?.text() 
                     ?: ""
-                season.select(episodeListSelector()).map { element ->
+                // Avoid recursive selectors inside the tab-pane
+                val episodes = season.select("a").filter { it.attr("href").contains("/episode/") }
+                episodes.map { element ->
                     episodeFromElement(element).apply {
                         name = if (seasonName.isNotEmpty()) "$seasonName - $name" else name
                     }
