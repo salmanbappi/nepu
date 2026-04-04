@@ -2,7 +2,7 @@ ext {
     extName = 'Nepu'
     extClass = '.Nepu'
     author = '@salmanbappi'
-    extVersionCode = 1019
+    extVersionCode = 1022
 }
 
 apply from: "$rootDir/common.gradle"
