@@ -50,15 +50,15 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun popularAnimeRequest(page: Int): Request {
         val path = if (page == 1) "discovery" else "discovery/page/$page"
-        return GET("$baseUrl/$path", headers)
+        return GET("$baseUrl/$path/", headers) // Added trailing slash for stability
     }
 
-    override fun popularAnimeSelector(): String = "article, .jws-post-item, .movie-item, .anime-item, .item, .w_item_a, .post-item, .jws-post-wrapper, .post-archive, .movies-list .item"
+    override fun popularAnimeSelector(): String = ".jws-post-wrapper, .movie-item, .anime-item, .item, .w_item_a, .post-item, article.post"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
+        val link = element.selectFirst("a") ?: element
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst("h2, h3, h4, h5, .title, .name, .jws-post-title")?.text() 
+        title = element.selectFirst(".jws-post-title, h2, h3, .title, .name")?.text() 
             ?: element.selectFirst("img")?.attr("alt")
             ?: link.attr("title") 
             ?: ""
@@ -66,13 +66,13 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         thumbnail_url = img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
     }
 
-    override fun popularAnimeNextPageSelector(): String? = "nav a:contains(Next), .pagination a[rel=next], a.next, div.resppages > a > span.fa-chevron-right, .next.page-numbers"
+    override fun popularAnimeNextPageSelector(): String? = ".pagination a.next, a.next, .next.page-numbers"
 
     // =============================== Latest ===============================
 
     override fun latestUpdatesRequest(page: Int): Request {
         val path = if (page == 1) "new-releases" else "new-releases/page/$page"
-        return GET("$baseUrl/$path", headers)
+        return GET("$baseUrl/$path/", headers)
     }
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
