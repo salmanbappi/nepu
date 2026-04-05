@@ -65,7 +65,14 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         thumbnail_url = element.extractImageUrl()
     }
 
-    override fun popularAnimeNextPageSelector(): String? = ".pagination a[title=Next], a[title=Next], a[title=next], .pagination a.next, a.next, .next.page-numbers, a.page-link:contains(Next)"
+    override fun popularAnimeNextPageSelector(): String? = "ul.pagination li:not(.disabled) a, .pagination a[title=Next], a[title=Next], a[title=next], .pagination a.next, a.next, .next.page-numbers, a.page-link:contains(Next)"
+
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        val animes = document.select(popularAnimeSelector()).map { popularAnimeFromElement(it) }
+        val hasNextPage = document.selectFirst(popularAnimeNextPageSelector()) != null || animes.size >= 20
+        return AnimesPage(animes, hasNextPage)
+    }
 
     // =============================== Latest ===============================
 
@@ -76,6 +83,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
     override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
+
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
 
@@ -146,10 +155,10 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     // =========================== Anime Details ============================
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        val sheader = document.selectFirst("div.sheader, div.detail-content, .detail-header")
+        val sheader = document.selectFirst("div.sheader, div.detail-content, .detail-header, .app-section")
         title = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text() 
             ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title, h1")?.text() ?: ""
-        description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2, div.detail div.text, meta[name='description']")?.let {
+        description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2, div.detail div.text, meta[name='description'], meta[property='og:description']")?.let {
             if (it.tagName() == "meta") it.attr("content") else it.text()
         }
         genre = document.select("div.sgeneros a, .genres a, .entry-content .genre a, .ganre-wrapper a, div.video-attr:contains(Genre) a").joinToString { it.text() }
@@ -159,7 +168,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item"
+    override fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item, a[href*='/episode/']"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
@@ -171,7 +180,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = response.asJsoup()
-        val seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
+        val seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane, div.episodes")
+        
         if (seasons.isEmpty()) {
             val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") }
             if (episodes.isNotEmpty()) {
@@ -189,18 +199,25 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             return emptyList()
         }
         
-        return seasons.flatMap { season ->
+        val episodeList = seasons.flatMap { season ->
             val seasonId = season.attr("id")
-            val seasonName = if (seasonId.isNotEmpty()) doc.selectFirst("a[href='#$seasonId']")?.text() else null
+            val seasonName = (if (seasonId.isNotEmpty()) doc.selectFirst("a[href='#$seasonId']")?.text() else null)
                 ?: season.selectFirst("span.se-t")?.text() 
                 ?: ""
             val episodes = season.select("a").filter { it.attr("href").contains("/episode/") }
             episodes.map { element ->
                 episodeFromElement(element).apply {
-                    name = if (seasonName.isNotEmpty()) "$seasonName - $name" else name
+                    name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
                 }
             }
-        }.distinctBy { it.url }.reversed()
+        }.distinctBy { it.url }
+        
+        return if (episodeList.isEmpty()) {
+            // Last resort: search all links for episodes
+            doc.select("a[href*='/episode/']").map { episodeFromElement(it) }.distinctBy { it.url }.reversed()
+        } else {
+            episodeList.reversed()
+        }
     }
 
     private fun parseEpisodeNumber(text: String): Float {
@@ -270,7 +287,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 ?: style.substringAfter("url(").substringBefore(")")
                     .replace("'", "").replace("\"", "").replace("&quot;", "").trim()
             if (url.isNotEmpty()) {
-                return if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "https://${baseUrl.substringAfter("://")}/${url.removePrefix("/")}"
+                val absoluteUrl = if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "https://${baseUrl.substringAfter("://")}/${url.removePrefix("/")}"
+                return absoluteUrl.replace(" ", "%20")
             }
         }
         val img = selectFirst("img")
