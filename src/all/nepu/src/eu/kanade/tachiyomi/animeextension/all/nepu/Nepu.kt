@@ -53,7 +53,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         return GET("$baseUrl/$path/", headers)
     }
 
-    override fun popularAnimeSelector(): String = ".list-movie, .list-episode, .jws-post-wrapper, .movie-item, .anime-item, .item, .w_item_a, .post-item, article.post"
+    override fun popularAnimeSelector(): String = ".list-movie, .list-episode, .jws-post-wrapper, .movie-item, .anime-item, .item, .w_item_a, .post-item, article.post, .col > a"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a") ?: element
@@ -190,7 +190,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val seasonName = (if (seasonId.isNotEmpty()) doc.selectFirst("a[href='#$seasonId']")?.text() else null)
                     ?: season.selectFirst("span.se-t")?.text() 
                     ?: ""
-                val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") }
+                val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/movie/") }
                 episodes.forEach { element ->
                     episodeList.add(episodeFromElement(element).apply {
                         name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
@@ -200,7 +200,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }
         
         if (episodeList.isEmpty()) {
-            val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") }
+            val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/movie/") }
             if (episodes.isNotEmpty()) {
                 episodeList.addAll(episodes.map { episodeFromElement(it) })
             }
@@ -228,7 +228,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================ Video Links =============================
 
-    override fun videoListSelector(): String = "div.source-box iframe, iframe, .player-iframe, #player iframe"
+    override fun videoListSelector(): String = "div#player iframe, #player pjsdiv iframe, .embed-code iframe, div.source-box iframe, iframe, .player-iframe"
 
     override fun videoFromElement(element: Element): Video {
         val url = element.attr("abs:src").ifEmpty { element.attr("abs:data-src") }
@@ -253,9 +253,9 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     ) {
         fun toPath() = when (state) {
             0 -> "discovery"
-            1 -> "trending"
+            1 -> "trends"
             2 -> "movies"
-            3 -> "tvshows"
+            3 -> "shows"
             else -> "discovery"
         }
     }
@@ -266,7 +266,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     ) {
         fun toSlug() = when (state) {
             1 -> "movies"
-            2 -> "tvshows"
+            2 -> "shows"
             else -> ""
         }
     }
