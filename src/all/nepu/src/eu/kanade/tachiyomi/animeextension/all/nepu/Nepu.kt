@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
@@ -261,18 +262,19 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                     .build()
 
                 try {
-                    val embedResponse = client.newCall(request).execute()
-                    val embedHtml = embedResponse.body.string()
-                    val embedDoc = Jsoup.parse(embedHtml)
-                    val iframeUrl = embedDoc.selectFirst("iframe")?.attr("src")
-                    
-                    if (iframeUrl != null && iframeUrl.isNotEmpty()) {
-                        videoList.add(Video(iframeUrl, name, iframeUrl))
-                    } else {
-                        val fileMatch = Regex("""file"?\s*:\s*"([^"]+)"""").find(embedHtml)
-                        if (fileMatch != null) {
-                            val url = fileMatch.groupValues[1]
-                            videoList.add(Video(url, name, url))
+                    client.newCall(request).execute().use { embedResponse ->
+                        val embedHtml = embedResponse.body.string()
+                        val embedDoc = Jsoup.parse(embedHtml)
+                        val iframeUrl = embedDoc.selectFirst("iframe")?.attr("src")
+                        
+                        if (!iframeUrl.isNullOrBlank()) {
+                            videoList.add(Video(iframeUrl!!, name, iframeUrl!!))
+                        } else {
+                            val fileMatch = Regex("""file"?\s*:\s*"([^"]+)"""").find(embedHtml)
+                            if (fileMatch != null) {
+                                val url = fileMatch.groupValues[1]
+                                videoList.add(Video(url, name, url))
+                            }
                         }
                     }
                 } catch (e: Exception) {
