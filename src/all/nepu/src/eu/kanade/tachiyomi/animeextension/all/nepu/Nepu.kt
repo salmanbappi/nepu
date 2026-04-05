@@ -63,10 +63,10 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         return GET("$baseUrl/$path/", headers)
     }
 
-    override fun popularAnimeSelector(): String = ".list-movie, .list-episode, .jws-post-wrapper, .movie-item, .anime-item, .item, .w_item_a, .post-item, article.post, .col > a"
+    override fun popularAnimeSelector(): String = ".list-movie, .list-episode"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = element.selectFirst("a") ?: element
+        val link = if (element.tagName() == "a") element else element.selectFirst("a") ?: element
         setUrlWithoutDomain(link.attr("href"))
         title = element.selectFirst(".list-title, .jws-post-title, h2, h3, .title, .name")?.text() 
             ?: element.selectFirst("img")?.attr("alt")
@@ -244,6 +244,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
+        val pageUrl = response.request.url.toString()
 
         document.select(".btn-service").forEach { btn ->
             val embedId = btn.attr("data-embed")
@@ -259,21 +260,28 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                     .post(postBody)
                     .headers(headers)
                     .addHeader("X-Requested-With", "XMLHttpRequest")
+                    .addHeader("Referer", pageUrl)
                     .build()
 
                 try {
                     client.newCall(request).execute().use { embedResponse ->
                         val embedHtml = embedResponse.body.string()
-                        val embedDoc = Jsoup.parse(embedHtml)
-                        val iframeUrl = embedDoc.selectFirst("iframe")?.attr("src")
+                        val embedDoc = Jsoup.parse(embedHtml, baseUrl)
+                        val iframeUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
                         
                         if (!iframeUrl.isNullOrBlank()) {
                             videoList.add(Video(iframeUrl!!, name, iframeUrl!!))
                         } else {
-                            val fileMatch = Regex("""file"?\s*:\s*"([^"]+)"""").find(embedHtml)
-                            if (fileMatch != null) {
-                                val url = fileMatch.groupValues[1]
-                                videoList.add(Video(url, name, url))
+                            val videoSrc = embedDoc.selectFirst("video source")?.attr("abs:src")
+                            if (!videoSrc.isNullOrBlank()) {
+                                videoList.add(Video(videoSrc!!, name, videoSrc!!))
+                            } else {
+                                val fileMatch = Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)
+                                if (fileMatch != null) {
+                                    val url = fileMatch.groupValues[1]
+                                    val absUrl = if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "$baseUrl/${url.removePrefix("/")}"
+                                    videoList.add(Video(absUrl, name, absUrl))
+                                }
                             }
                         }
                     }
@@ -284,7 +292,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }
         
         if (videoList.isEmpty()) {
-            document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe").forEach { iframe ->
+            document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed']").forEach { iframe ->
                 val src = iframe.attr("abs:src")
                 if (src.isNotBlank() && !src.contains("index.html")) {
                     videoList.add(Video(src, "Video", src))
