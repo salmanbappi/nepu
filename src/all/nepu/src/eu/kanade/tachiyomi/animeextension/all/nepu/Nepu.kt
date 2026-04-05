@@ -40,6 +40,15 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(CloudflareInterceptor(network.client))
+        .addInterceptor { chain ->
+            val request = chain.request()
+            if (request.url.host.contains("tmdb.org")) {
+                val newHeaders = request.headers.newBuilder().removeAll("Referer").build()
+                chain.proceed(request.newBuilder().headers(newHeaders).build())
+            } else {
+                chain.proceed(request)
+            }
+        }
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
@@ -130,21 +139,24 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val listingFilter = filters.filterIsInstance<ListingFilter>().firstOrNull()
         if (listingFilter != null && listingFilter.state != 0) {
             val path = listingFilter.toPath()
-            val response = client.newCall(GET("$baseUrl/$path/page/$page", headers)).execute()
+            val pagePath = if (page == 1) "" else "/page/$page"
+            val response = client.newCall(GET("$baseUrl/$path$pagePath", headers)).execute()
             return searchAnimeParse(response)
         }
 
         val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
         if (genreFilter != null && genreFilter.state != 0) {
             val genreSlug = genreFilter.toSlug()
-            val response = client.newCall(GET("$baseUrl/category/$genreSlug/page/$page", headers)).execute()
+            val pagePath = if (page == 1) "" else "/page/$page"
+            val response = client.newCall(GET("$baseUrl/category/$genreSlug$pagePath", headers)).execute()
             return searchAnimeParse(response)
         }
 
         val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
         if (typeFilter != null && typeFilter.state != 0) {
             val typeSlug = typeFilter.toSlug()
-            val response = client.newCall(GET("$baseUrl/$typeSlug/page/$page", headers)).execute()
+            val pagePath = if (page == 1) "" else "/page/$page"
+            val response = client.newCall(GET("$baseUrl/$typeSlug$pagePath", headers)).execute()
             return searchAnimeParse(response)
         }
 
@@ -228,18 +240,69 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================ Video Links =============================
 
-    override fun videoListSelector(): String = "div#player iframe, #player pjsdiv iframe, .embed-code iframe, div.source-box iframe, iframe, .player-iframe"
+    override fun videoListParse(response: Response): List<Video> {
+        val document = response.asJsoup()
+        val videoList = mutableListOf<Video>()
 
-    override fun videoFromElement(element: Element): Video {
-        val url = element.attr("abs:src").ifEmpty { element.attr("abs:data-src") }
-        return Video(url, "Video", url)
+        document.select(".btn-service").forEach { btn ->
+            val embedId = btn.attr("data-embed")
+            var name = btn.selectFirst(".source-selected")?.text() 
+                ?: btn.selectFirst(".name")?.text() 
+                ?: btn.text()
+            name = name.trim().ifEmpty { "Server" }
+
+            if (embedId.isNotEmpty()) {
+                val postBody = okhttp3.FormBody.Builder().add("id", embedId).build()
+                val request = Request.Builder()
+                    .url("$baseUrl/ajax/embed")
+                    .post(postBody)
+                    .headers(headers)
+                    .addHeader("X-Requested-With", "XMLHttpRequest")
+                    .build()
+
+                try {
+                    val embedResponse = client.newCall(request).execute()
+                    val embedHtml = embedResponse.body.string()
+                    val embedDoc = Jsoup.parse(embedHtml)
+                    val iframeUrl = embedDoc.selectFirst("iframe")?.attr("src")
+                    
+                    if (iframeUrl != null && iframeUrl.isNotEmpty()) {
+                        videoList.add(Video(iframeUrl, name, iframeUrl))
+                    } else {
+                        val fileMatch = Regex("""file"?\s*:\s*"([^"]+)"""").find(embedHtml)
+                        if (fileMatch != null) {
+                            val url = fileMatch.groupValues[1]
+                            videoList.add(Video(url, name, url))
+                        }
+                    }
+                } catch (e: Exception) {
+                    // skip
+                }
+            }
+        }
+        
+        if (videoList.isEmpty()) {
+            document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe").forEach { iframe ->
+                val src = iframe.attr("abs:src")
+                if (src.isNotBlank() && !src.contains("index.html")) {
+                    videoList.add(Video(src, "Video", src))
+                }
+            }
+        }
+        
+        return videoList
     }
+
+    override fun videoListSelector(): String = throw UnsupportedOperationException()
+
+    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
 
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
 
     // ============================== Filters ==============================
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        AnimeFilter.Header("Filters are mutually exclusive!"),
         ListingFilter(),
         AnimeFilter.Separator(),
         TypeFilter(),
@@ -325,6 +388,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         private val GENRES = arrayOf(
             "All" to "",
             "Action" to "action",
+            "Action & Adventure" to "action-adventure",
             "Adventure" to "adventure",
             "Animation" to "animation",
             "Anime" to "anime",
@@ -336,13 +400,20 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             "Fantasy" to "fantasy",
             "History" to "history",
             "Horror" to "horror",
+            "Kids" to "kids",
             "Music" to "music",
             "Mystery" to "mystery",
+            "News" to "news",
+            "Reality" to "reality",
             "Romance" to "romance",
-            "Science Fiction" to "sci-fi",
+            "Sci-Fi & Fantasy" to "sci-fi-fantasy",
+            "Science Fiction" to "science-fiction",
+            "Soap" to "soap",
+            "Talk" to "talk",
             "Thriller" to "thriller",
             "TV Movie" to "tv-movie",
             "War" to "war",
+            "War & Politics" to "war-politics",
             "Western" to "western"
         )
     }
