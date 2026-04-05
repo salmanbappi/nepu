@@ -43,7 +43,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
@@ -65,7 +65,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         thumbnail_url = element.extractImageUrl()
     }
 
-    override fun popularAnimeNextPageSelector(): String? = "ul.pagination li:not(.disabled) a, .pagination a[title=Next], a[title=Next], a[title=next], .pagination a.next, a.next, .next.page-numbers, a.page-link:contains(Next)"
+    override fun popularAnimeNextPageSelector(): String? = "ul.pagination li:not(.disabled) a, .pagination a[title*=ext], a[title*=ext], a[title*=EXT], .pagination a.next, a.next, .next.page-numbers, a.page-link:contains(Next)"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -168,7 +168,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item, a[href*='/episode/']"
+    override fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item, a[href*='/episode/'], a[href*='/movie/']"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
@@ -182,42 +182,43 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val doc = response.asJsoup()
         val seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane, div.episodes")
         
-        if (seasons.isEmpty()) {
-            val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") }
-            if (episodes.isNotEmpty()) {
-                return episodes.map { episodeFromElement(it) }.distinctBy { it.url }.reversed()
+        val episodeList = mutableListOf<SEpisode>()
+        
+        if (seasons.isNotEmpty()) {
+            seasons.forEach { season ->
+                val seasonId = season.attr("id")
+                val seasonName = (if (seasonId.isNotEmpty()) doc.selectFirst("a[href='#$seasonId']")?.text() else null)
+                    ?: season.selectFirst("span.se-t")?.text() 
+                    ?: ""
+                val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") }
+                episodes.forEach { element ->
+                    episodeList.add(episodeFromElement(element).apply {
+                        name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
+                    })
+                }
             }
-            // Movie fallback
-            val playButton = doc.selectFirst("a[href*='/episode/'], a.btn-play, a.watch-now, .play-btn a, a:contains(Watch Now)")
+        }
+        
+        if (episodeList.isEmpty()) {
+            val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") }
+            if (episodes.isNotEmpty()) {
+                episodeList.addAll(episodes.map { episodeFromElement(it) })
+            }
+        }
+        
+        // Movie fallback
+        if (episodeList.isEmpty()) {
+            val playButton = doc.selectFirst("a[href*='/episode/'], a[href*='/movie/'], a.btn-play, a.watch-now, .play-btn a, a:contains(Watch Now)")
             if (playButton != null) {
-                return listOf(SEpisode.create().apply {
+                episodeList.add(SEpisode.create().apply {
                     name = "Movie"
                     setUrlWithoutDomain(playButton.attr("href"))
                     episode_number = 1f
                 })
             }
-            return emptyList()
         }
         
-        val episodeList = seasons.flatMap { season ->
-            val seasonId = season.attr("id")
-            val seasonName = (if (seasonId.isNotEmpty()) doc.selectFirst("a[href='#$seasonId']")?.text() else null)
-                ?: season.selectFirst("span.se-t")?.text() 
-                ?: ""
-            val episodes = season.select("a").filter { it.attr("href").contains("/episode/") }
-            episodes.map { element ->
-                episodeFromElement(element).apply {
-                    name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
-                }
-            }
-        }.distinctBy { it.url }
-        
-        return if (episodeList.isEmpty()) {
-            // Last resort: search all links for episodes
-            doc.select("a[href*='/episode/']").map { episodeFromElement(it) }.distinctBy { it.url }.reversed()
-        } else {
-            episodeList.reversed()
-        }
+        return episodeList.distinctBy { it.url }.reversed()
     }
 
     private fun parseEpisodeNumber(text: String): Float {
@@ -288,7 +289,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                     .replace("'", "").replace("\"", "").replace("&quot;", "").trim()
             if (url.isNotEmpty()) {
                 val absoluteUrl = if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "https://${baseUrl.substringAfter("://")}/${url.removePrefix("/")}"
-                return absoluteUrl.replace(" ", "%20")
+                return absoluteUrl.replace(" ", "%20").replace("&quot;", "")
             }
         }
         val img = selectFirst("img")
