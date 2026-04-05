@@ -168,7 +168,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item, a[href*='/episode/'], a[href*='/movie/']"
+    override fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item, a[href*='/episode/'], a[href*='/movie/'], a[href*='/show/'], a[href*='/serie/']"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
@@ -190,7 +190,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val seasonName = (if (seasonId.isNotEmpty()) doc.selectFirst("a[href='#$seasonId']")?.text() else null)
                     ?: season.selectFirst("span.se-t")?.text() 
                     ?: ""
-                val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/movie/") }
+                val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
                 episodes.forEach { element ->
                     episodeList.add(episodeFromElement(element).apply {
                         name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
@@ -200,7 +200,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }
         
         if (episodeList.isEmpty()) {
-            val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/movie/") }
+            val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
             if (episodes.isNotEmpty()) {
                 episodeList.addAll(episodes.map { episodeFromElement(it) })
             }
@@ -208,7 +208,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         
         // Movie fallback
         if (episodeList.isEmpty()) {
-            val playButton = doc.selectFirst("a[href*='/episode/'], a[href*='/movie/'], a.btn-play, a.watch-now, .play-btn a, a:contains(Watch Now)")
+            val playButton = doc.selectFirst("a[href*='/episode/'], a[href*='/movie/'], a[href*='/serie/'], a[href*='/show/'], a.btn-play, a.watch-now, .play-btn a, a:contains(Watch Now)")
             if (playButton != null) {
                 episodeList.add(SEpisode.create().apply {
                     name = "Movie"
@@ -281,15 +281,22 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     // ============================== Utils ==============================
 
     private fun Element.extractImageUrl(): String {
+        // Unescape HTML entities first
         val styleElement = selectFirst("[style*='url(']") ?: selectFirst(".media, .list-media, .poster, .thumb") ?: this
         val style = styleElement.attr("style")
         if (style.contains("url(")) {
             val url = Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
                 ?: style.substringAfter("url(").substringBefore(")")
-                    .replace("'", "").replace("\"", "").replace("&quot;", "").trim()
-            if (url.isNotEmpty()) {
-                val absoluteUrl = if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "https://${baseUrl.substringAfter("://")}/${url.removePrefix("/")}"
-                return absoluteUrl.replace(" ", "%20").replace("&quot;", "")
+            
+            val cleanedUrl = url.replace("&quot;", "")
+                .replace("\"", "")
+                .replace("'", "")
+                .replace(")", "")
+                .trim()
+                
+            if (cleanedUrl.isNotEmpty()) {
+                val absoluteUrl = if (cleanedUrl.startsWith("http")) cleanedUrl else if (cleanedUrl.startsWith("//")) "https:$cleanedUrl" else "https://${baseUrl.substringAfter("://")}/${cleanedUrl.removePrefix("/")}"
+                return absoluteUrl.replace(" ", "%20")
             }
         }
         val img = selectFirst("img")
