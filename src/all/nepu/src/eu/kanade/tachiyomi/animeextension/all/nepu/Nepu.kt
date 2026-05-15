@@ -193,7 +193,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
-        setUrlWithoutDomain(link.attr("href"))
+        setUrlWithoutDomain(link.attr("abs:href"))
         val epTitle = element.selectFirst("span, .name, .ep-title, .episode")?.text() ?: element.text()
         name = epTitle.trim().ifEmpty { "Episode 1" }
         episode_number = parseEpisodeNumber(name)
