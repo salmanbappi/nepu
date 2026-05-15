@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
+import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.OkHttpClient
@@ -293,26 +294,33 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                             }.trim()
                         }
 
-                        if (!iframeUrl.isNullOrBlank()) {
-                            val finalUrl = sanitize(iframeUrl)
-                            if (finalUrl.contains(".")) {
-                                videoList.add(Video(finalUrl, name, finalUrl, headers = videoHeaders))
+                        fun extractVideos(finalUrl: String, name: String, headers: okhttp3.Headers) {
+                            if (!finalUrl.contains(".")) return
+                            
+                            if (finalUrl.contains(".mp4") || finalUrl.contains(".m3u8")) {
+                                videoList.add(Video(finalUrl, name, finalUrl, headers = headers))
+                            } else {
+                                try {
+                                    val extracted = UniversalExtractor(client).videosFromUrl(finalUrl, headers, prefix = name)
+                                    if (extracted.isNotEmpty()) {
+                                        videoList.addAll(extracted)
+                                    }
+                                } catch (e: Exception) {
+                                    // ignore extraction errors
+                                }
                             }
+                        }
+
+                        if (!iframeUrl.isNullOrBlank()) {
+                            extractVideos(sanitize(iframeUrl), name, videoHeaders)
                         } else {
                             val videoSrc = embedDoc.selectFirst("video source")?.attr("abs:src")
                             if (!videoSrc.isNullOrBlank()) {
-                                val finalUrl = sanitize(videoSrc)
-                                if (finalUrl.contains(".")) {
-                                    videoList.add(Video(finalUrl, name, finalUrl, headers = videoHeaders))
-                                }
+                                extractVideos(sanitize(videoSrc), name, videoHeaders)
                             } else {
                                 val fileMatch = Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)
                                 if (fileMatch != null) {
-                                    val url = fileMatch.groupValues[1]
-                                    val finalUrl = sanitize(url)
-                                    if (finalUrl.contains(".")) {
-                                        videoList.add(Video(finalUrl, name, finalUrl, headers = videoHeaders))
-                                    }
+                                    extractVideos(sanitize(fileMatch.groupValues[1]), name, videoHeaders)
                                 }
                             }
                         }
@@ -329,8 +337,24 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 if (src.isNotBlank() && !src.contains("index.html")) {
                     val videoHeaders = headers.newBuilder()
                         .set("Referer", pageUrl)
+                        .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
+                        .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
+                        .set("Sec-CH-UA-Mobile", "?1")
+                        .set("Sec-CH-UA-Platform", "\"Android\"")
                         .build()
-                    videoList.add(Video(src, "Video", src, headers = videoHeaders))
+                    
+                    if (src.contains(".mp4") || src.contains(".m3u8")) {
+                        videoList.add(Video(src, "Video", src, headers = videoHeaders))
+                    } else {
+                        try {
+                            val extracted = UniversalExtractor(client).videosFromUrl(src, videoHeaders, prefix = "Video")
+                            if (extracted.isNotEmpty()) {
+                                videoList.addAll(extracted)
+                            }
+                        } catch (e: Exception) {
+                            // ignore extraction errors
+                        }
+                    }
                 }
             }
         }
