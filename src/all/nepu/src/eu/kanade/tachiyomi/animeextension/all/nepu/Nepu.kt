@@ -338,9 +338,9 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                             }.trim()
                         }
 
-                        fun extractVideos(finalUrl: String, name: String) {
+                        fun extractVideos(finalUrl: String, name: String, refererContext: String) {
                             if (!finalUrl.contains(".")) return
-                            val mediaHeaders = buildVideoHeaders(finalUrl)
+                            val mediaHeaders = buildVideoHeaders(refererContext)
 
                             if (finalUrl.contains(".mp4") || finalUrl.contains(".m3u8")) {
                                 videoList.add(Video(finalUrl, name, finalUrl, headers = mediaHeaders))
@@ -367,7 +367,9 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                         }
 
                         if (!extractedUrl.isNullOrBlank()) {
-                            extractVideos(sanitize(extractedUrl), name)
+                            val sanitized = sanitize(extractedUrl)
+                            val refererContext = if (sanitized.contains(".mp4") || sanitized.contains(".m3u8")) pageUrl else sanitized
+                            extractVideos(sanitized, name, refererContext)
                         }
                     }
                 } catch (e: Exception) {
