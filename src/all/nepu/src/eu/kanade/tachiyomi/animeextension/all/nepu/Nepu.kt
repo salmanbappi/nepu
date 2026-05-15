@@ -274,9 +274,34 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                     client.newCall(request).execute().use { embedResponse ->
                         if (!embedResponse.isSuccessful) return@forEach
                         val embedHtml = embedResponse.body.string()
-                        val embedDoc = Jsoup.parse(embedHtml, pageUrl)
-                        val iframeUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
                         
+                        var extractedUrl: String? = null
+                        
+                        // Try to parse JSON first (Standard Dooplay)
+                        try {
+                            val jsonMatch = Regex("""["']?embed_url["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
+                                ?: Regex("""["']?link["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
+                                ?: Regex("""["']?url["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
+                            
+                            if (jsonMatch != null) {
+                                val url = jsonMatch.groupValues[1].replace("\\/", "/")
+                                // Sometimes the JSON embed_url contains an iframe tag instead of a raw URL
+                                if (url.contains("<iframe")) {
+                                    extractedUrl = Jsoup.parse(url).selectFirst("iframe")?.attr("abs:src")
+                                } else {
+                                    extractedUrl = url
+                                }
+                            }
+                        } catch (e: Exception) {}
+
+                        // Fallback to HTML parsing if JSON extraction failed
+                        if (extractedUrl.isNullOrBlank()) {
+                            val embedDoc = Jsoup.parse(embedHtml, pageUrl)
+                            extractedUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
+                                ?: embedDoc.selectFirst("video source")?.attr("abs:src")
+                                ?: Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
+                        }
+
                         val videoHeaders = headers.newBuilder()
                             .set("Referer", pageUrl)
                             .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
@@ -311,18 +336,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                             }
                         }
 
-                        if (!iframeUrl.isNullOrBlank()) {
-                            extractVideos(sanitize(iframeUrl), name, videoHeaders)
-                        } else {
-                            val videoSrc = embedDoc.selectFirst("video source")?.attr("abs:src")
-                            if (!videoSrc.isNullOrBlank()) {
-                                extractVideos(sanitize(videoSrc), name, videoHeaders)
-                            } else {
-                                val fileMatch = Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)
-                                if (fileMatch != null) {
-                                    extractVideos(sanitize(fileMatch.groupValues[1]), name, videoHeaders)
-                                }
-                            }
+                        if (!extractedUrl.isNullOrBlank()) {
+                            extractVideos(sanitize(extractedUrl), name, videoHeaders)
                         }
                     }
                 } catch (e: Exception) {
