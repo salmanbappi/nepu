@@ -53,8 +53,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
-        .header("Referer", "$baseUrl/")
+        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+        .set("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
 
@@ -275,21 +275,21 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                         val iframeUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
                         
                         val videoHeaders = headers.newBuilder()
-                            .header("Referer", pageUrl)
+                            .set("Referer", pageUrl)
                             .build()
 
                         if (!iframeUrl.isNullOrBlank()) {
-                            videoList.add(Video(iframeUrl!!, name, iframeUrl!!, videoHeaders))
+                            videoList.add(Video(iframeUrl!!, name, iframeUrl!!, headers = videoHeaders))
                         } else {
                             val videoSrc = embedDoc.selectFirst("video source")?.attr("abs:src")
                             if (!videoSrc.isNullOrBlank()) {
-                                videoList.add(Video(videoSrc!!, name, videoSrc!!, videoHeaders))
+                                videoList.add(Video(videoSrc!!, name, videoSrc!!, headers = videoHeaders))
                             } else {
                                 val fileMatch = Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)
                                 if (fileMatch != null) {
                                     val url = fileMatch.groupValues[1]
                                     val absUrl = if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else if (url.startsWith("/")) "$baseUrl$url" else "$baseUrl/$url"
-                                    videoList.add(Video(absUrl, name, absUrl, videoHeaders))
+                                    videoList.add(Video(absUrl, name, absUrl, headers = videoHeaders))
                                 }
                             }
                         }
@@ -305,9 +305,9 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val src = iframe.attr("abs:src")
                 if (src.isNotBlank() && !src.contains("index.html")) {
                     val videoHeaders = headers.newBuilder()
-                        .header("Referer", pageUrl)
+                        .set("Referer", pageUrl)
                         .build()
-                    videoList.add(Video(src, "Video", src, videoHeaders))
+                    videoList.add(Video(src, "Video", src, headers = videoHeaders))
                 }
             }
         }
