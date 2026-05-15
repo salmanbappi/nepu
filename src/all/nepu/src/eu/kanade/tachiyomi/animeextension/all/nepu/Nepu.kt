@@ -53,8 +53,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
-        .add("Referer", "$baseUrl/")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+        .header("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
 
@@ -245,6 +245,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
         val pageUrl = response.request.url.toString()
+        val token = document.selectFirst("input[name=_TOKEN]")?.attr("value")
 
         document.select(".btn-service").forEach { btn ->
             val embedId = btn.attr("data-embed")
@@ -254,33 +255,41 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             name = name.trim().ifEmpty { "Server" }
 
             if (embedId.isNotEmpty()) {
-                val postBody = okhttp3.FormBody.Builder().add("id", embedId).build()
+                val postBodyBuilder = okhttp3.FormBody.Builder().add("id", embedId)
+                if (token != null) postBodyBuilder.add("_TOKEN", token)
+                val postBody = postBodyBuilder.build()
+
                 val request = Request.Builder()
                     .url("$baseUrl/ajax/embed")
                     .post(postBody)
-                    .headers(headers)
-                    .addHeader("X-Requested-With", "XMLHttpRequest")
-                    .addHeader("Referer", pageUrl)
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .header("Referer", pageUrl)
+                    .header("Origin", baseUrl)
                     .build()
 
                 try {
                     client.newCall(request).execute().use { embedResponse ->
+                        if (!embedResponse.isSuccessful) return@forEach
                         val embedHtml = embedResponse.body.string()
-                        val embedDoc = Jsoup.parse(embedHtml, baseUrl)
+                        val embedDoc = Jsoup.parse(embedHtml, pageUrl)
                         val iframeUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
                         
+                        val videoHeaders = headers.newBuilder()
+                            .header("Referer", pageUrl)
+                            .build()
+
                         if (!iframeUrl.isNullOrBlank()) {
-                            videoList.add(Video(iframeUrl!!, name, iframeUrl!!))
+                            videoList.add(Video(iframeUrl!!, name, iframeUrl!!, videoHeaders))
                         } else {
                             val videoSrc = embedDoc.selectFirst("video source")?.attr("abs:src")
                             if (!videoSrc.isNullOrBlank()) {
-                                videoList.add(Video(videoSrc!!, name, videoSrc!!))
+                                videoList.add(Video(videoSrc!!, name, videoSrc!!, videoHeaders))
                             } else {
                                 val fileMatch = Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)
                                 if (fileMatch != null) {
                                     val url = fileMatch.groupValues[1]
-                                    val absUrl = if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else "$baseUrl/${url.removePrefix("/")}"
-                                    videoList.add(Video(absUrl, name, absUrl))
+                                    val absUrl = if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else if (url.startsWith("/")) "$baseUrl$url" else "$baseUrl/$url"
+                                    videoList.add(Video(absUrl, name, absUrl, videoHeaders))
                                 }
                             }
                         }
@@ -295,12 +304,15 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed']").forEach { iframe ->
                 val src = iframe.attr("abs:src")
                 if (src.isNotBlank() && !src.contains("index.html")) {
-                    videoList.add(Video(src, "Video", src))
+                    val videoHeaders = headers.newBuilder()
+                        .header("Referer", pageUrl)
+                        .build()
+                    videoList.add(Video(src, "Video", src, videoHeaders))
                 }
             }
         }
         
-        return videoList
+        return videoList.distinctBy { it.videoUrl }
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
