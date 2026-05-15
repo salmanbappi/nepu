@@ -23,20 +23,24 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
     private val context: Application by injectLazy()
     private val handler by lazy { Handler(Looper.getMainLooper()) }
 
-    @Synchronized
     override fun intercept(chain: Interceptor.Chain): Response {
-        val originalRequest = chain.request()
-        val originalResponse = chain.proceed(originalRequest)
+        val request = chain.request()
+        val response = chain.proceed(request)
 
         // Check if Cloudflare anti-bot is active
-        if (!(originalResponse.code in ERROR_CODES && originalResponse.header("Server") in SERVER_CHECK)) {
-            return originalResponse
+        if (!(response.code in ERROR_CODES && response.header("Server") in SERVER_CHECK)) {
+            return response
+        }
+
+        // Avoid infinite loops
+        if (request.header(BYPASS_HEADER) != null) {
+            return response
         }
 
         return try {
-            originalResponse.close()
-            val request = resolveWithWebView(originalRequest)
-            chain.proceed(request)
+            response.close()
+            val newRequest = resolveWithWebView(request)
+            chain.proceed(newRequest)
         } catch (e: Exception) {
             throw IOException(e)
         }
@@ -57,10 +61,7 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
         val headers = request.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }.toMutableMap()
         
         val cookieManager = CookieManager.getInstance()
-        val oldCookie = cookieManager.getCookie(origRequestUrl)
-            ?.split(";")
-            ?.mapNotNull { it.trim().split("=").getOrNull(0) }
-            ?.firstOrNull { it == "cf_clearance" }
+        val oldCookie = getClearanceCookie(origRequestUrl)
 
         var webView: WebView? = null
 
@@ -79,7 +80,6 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
             webview.addJavascriptInterface(jsInterface, "CloudflareJSI")
             webview.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    // Start polling for completion
                     view?.evaluateJavascript(POLLING_SCRIPT) {}
                 }
             }
@@ -87,18 +87,16 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
             webview.loadUrl(origRequestUrl, headers)
         }
 
-        // Poll for cookie change in parallel to JS interface
+        // Parallel polling for cookie changes
         val thread = Thread {
             val start = System.currentTimeMillis()
             while (latch.count > 0 && System.currentTimeMillis() - start < 30000) {
-                val currentCookies = cookieManager.getCookie(origRequestUrl)
-                if (currentCookies != null && currentCookies.contains("cf_clearance")) {
-                    if (oldCookie == null || !currentCookies.contains("cf_clearance=$oldCookie")) {
-                        latch.countDown()
-                        break
-                    }
+                val currentCookie = getClearanceCookie(origRequestUrl)
+                if (currentCookie != null && currentCookie != oldCookie) {
+                    latch.countDown()
+                    break
                 }
-                Thread.sleep(1000)
+                Thread.sleep(1500)
             }
         }.apply { start() }
 
@@ -110,38 +108,50 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
             webView = null
         }
 
+        // Extract and sync all cookies
         val cookieString = cookieManager.getCookie(origRequestUrl)
-        val cookies = cookieString?.split(";")?.mapNotNull { 
-            Cookie.parse(request.url, it.trim()) 
-        } ?: emptyList()
+        val cookies = parseCookies(request.url, cookieString)
 
-        // Sync with OkHttp client
         cookies.forEach {
             client.cookieJar.saveFromResponse(request.url, listOf(it))
         }
 
-        return createRequestWithCookies(request, cookies)
+        return request.newBuilder()
+            .header(BYPASS_HEADER, "true")
+            .header("Cookie", cookies.joinToString("; ") { "${it.name}=${it.value}" })
+            .build()
     }
 
-    private fun createRequestWithCookies(request: Request, cookies: List<Cookie>): Request {
-        val filteredCookies = cookies.filter { it.matches(request.url) }
-        if (filteredCookies.isEmpty()) return request
+    private fun getClearanceCookie(url: String): String? {
+        return CookieManager.getInstance().getCookie(url)
+            ?.split(";")
+            ?.map { it.trim() }
+            ?.firstOrNull { it.startsWith("cf_clearance=") }
+            ?.substringAfter("=")
+    }
 
-        val cookieHeader = filteredCookies.joinToString("; ") { "${it.name}=${it.value}" }
-        return request.newBuilder()
-            .header("Cookie", cookieHeader)
-            .build()
+    private fun parseCookies(url: HttpUrl, cookieString: String?): List<Cookie> {
+        if (cookieString == null) return emptyList()
+        return cookieString.split(";").mapNotNull {
+            val parts = it.trim().split("=", limit = 2)
+            if (parts.size != 2) return@mapNotNull null
+            Cookie.Builder()
+                .name(parts[0])
+                .value(parts[1])
+                .domain(url.host)
+                .build()
+        }
     }
 
     companion object {
         private val ERROR_CODES = listOf(403, 503)
         private val SERVER_CHECK = arrayOf("cloudflare-nginx", "cloudflare")
+        private const val BYPASS_HEADER = "X-Cloudflare-Bypass"
 
         private val POLLING_SCRIPT = """
             (function() {
                 const interval = setInterval(() => {
                     const isPassed = () => {
-                        // If these elements are gone, we likely passed
                         return !document.querySelector('#challenge-form') && 
                                !document.querySelector('#challenge-stage') &&
                                !document.querySelector('#cf-challenge-running');
@@ -153,7 +163,6 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                         return;
                     }
 
-                    // Try to click Turnstile checkbox if visible
                     const turnstile = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
                     if (turnstile) {
                         try {
@@ -162,7 +171,6 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                         } catch(e) {}
                     }
 
-                    // Try simple button
                     const btn = document.querySelector('#challenge-stage input[type="button"]');
                     if (btn) btn.click();
 
