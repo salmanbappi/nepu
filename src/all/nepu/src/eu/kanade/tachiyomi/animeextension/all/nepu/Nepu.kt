@@ -400,6 +400,27 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             }
         }
         
+        // Final Fallback for internal player (e.g. Gravity Falls)
+        // If the video is not in an iframe but loaded dynamically on the page itself
+        if (videoList.isEmpty()) {
+            val videoHeaders = headers.newBuilder()
+                .set("Referer", pageUrl)
+                .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
+                .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
+                .set("Sec-CH-UA-Mobile", "?1")
+                .set("Sec-CH-UA-Platform", "\"Android\"")
+                .build()
+                
+            try {
+                val extracted = UniversalExtractor(client).videosFromUrl(pageUrl, videoHeaders, prefix = "Internal Player")
+                if (extracted.isNotEmpty()) {
+                    videoList.addAll(extracted)
+                }
+            } catch (e: Exception) {
+                // ignore extraction errors
+            }
+        }
+        
         return videoList.distinctBy { it.videoUrl }
     }
 

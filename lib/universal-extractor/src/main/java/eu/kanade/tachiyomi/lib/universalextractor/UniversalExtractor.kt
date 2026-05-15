@@ -41,6 +41,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 useWideViewPort = false
                 loadWithOverviewMode = false
                 userAgentString = origRequestHeader["User-Agent"]
+                mediaPlaybackRequiresUserGesture = false
             }
             newView.webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
@@ -109,7 +110,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
     }
 
     companion object {
-        const val TIMEOUT_SEC: Long = 10
+        const val TIMEOUT_SEC: Long = 20
         private val VIDEO_REGEX by lazy { Regex(".*\\.(mp4|m3u8|mpd)(\\?.*)?$") }
     }
 }
