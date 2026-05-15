@@ -247,6 +247,35 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             ?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
     }
 
+    private fun buildVideoHeaders(refererUrl: String): okhttp3.Headers {
+        val referer = try {
+            val parsed = refererUrl.toHttpUrl()
+            "${parsed.scheme}://${parsed.host}/"
+        } catch (_: Exception) {
+            "$baseUrl/"
+        }
+
+        val origin = try {
+            val parsed = refererUrl.toHttpUrl()
+            "${parsed.scheme}://${parsed.host}"
+        } catch (_: Exception) {
+            baseUrl
+        }
+
+        return headers.newBuilder()
+            .set("Referer", referer)
+            .set("Origin", origin)
+            .set("Accept", "*/*")
+            .set("Sec-Fetch-Dest", "empty")
+            .set("Sec-Fetch-Mode", "cors")
+            .set("Sec-Fetch-Site", "cross-site")
+            .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
+            .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
+            .set("Sec-CH-UA-Mobile", "?1")
+            .set("Sec-CH-UA-Platform", "\"Android\"")
+            .build()
+    }
+
     // ============================ Video Links =============================
 
     override fun videoListParse(response: Response): List<Video> {
@@ -308,14 +337,6 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                                 ?: Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
                         }
 
-                        val videoHeaders = headers.newBuilder()
-                            .set("Referer", pageUrl)
-                            .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
-                            .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
-                            .set("Sec-CH-UA-Mobile", "?1")
-                            .set("Sec-CH-UA-Platform", "\"Android\"")
-                            .build()
-
                         fun sanitize(url: String): String {
                             return when {
                                 url.startsWith("http") -> url
@@ -325,22 +346,23 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                             }.trim()
                         }
 
-                        fun extractVideos(finalUrl: String, name: String, headers: okhttp3.Headers) {
+                        fun extractVideos(finalUrl: String, name: String) {
                             if (!finalUrl.contains(".")) return
-                            
+                            val mediaHeaders = buildVideoHeaders(finalUrl)
+
                             if (finalUrl.contains(".mp4") || finalUrl.contains(".m3u8")) {
-                                videoList.add(Video(finalUrl, name, finalUrl, headers = headers))
+                                videoList.add(Video(finalUrl, name, finalUrl, headers = mediaHeaders))
                             } else {
                                 try {
                                     when {
                                         finalUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(finalUrl, "DoodStream"))
-                                        finalUrl.contains("filemoon") || finalUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(finalUrl, "Filemoon", headers))
-                                        finalUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, headers).videosFromUrl(finalUrl, "VidMoly"))
-                                        finalUrl.contains("vidhide") || finalUrl.contains("guccihide") || finalUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(finalUrl, { "VidHide - $it" }))
-                                        finalUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, headers).videosFromUrl(finalUrl, "Voe"))
+                                        finalUrl.contains("filemoon") || finalUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(finalUrl, "Filemoon", mediaHeaders))
+                                        finalUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "VidMoly"))
+                                        finalUrl.contains("vidhide") || finalUrl.contains("guccihide") || finalUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, mediaHeaders).videosFromUrl(finalUrl, { "VidHide - $it" }))
+                                        finalUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "Voe"))
                                         finalUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(finalUrl, "StreamTape"))
                                         else -> {
-                                            val extracted = UniversalExtractor(client).videosFromUrl(finalUrl, headers, prefix = name)
+                                            val extracted = UniversalExtractor(client).videosFromUrl(finalUrl, mediaHeaders, prefix = name)
                                             if (extracted.isNotEmpty()) {
                                                 videoList.addAll(extracted)
                                             }
@@ -353,7 +375,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                         }
 
                         if (!extractedUrl.isNullOrBlank()) {
-                            extractVideos(sanitize(extractedUrl), name, videoHeaders)
+                            extractVideos(sanitize(extractedUrl), name)
                         }
                     }
                 } catch (e: Exception) {
@@ -364,15 +386,9 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         
         if (videoList.isEmpty()) {
             document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed']").forEach { iframe ->
-                val src = iframe.attr("abs:src")
-                if (src.isNotBlank() && !src.contains("index.html")) {
-                    val videoHeaders = headers.newBuilder()
-                        .set("Referer", pageUrl)
-                        .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
-                        .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
-                        .set("Sec-CH-UA-Mobile", "?1")
-                        .set("Sec-CH-UA-Platform", "\"Android\"")
-                        .build()
+                    val src = iframe.attr("abs:src")
+                    if (src.isNotBlank() && !src.contains("index.html")) {
+                    val videoHeaders = buildVideoHeaders(src)
                     
                     if (src.contains(".mp4") || src.contains(".m3u8")) {
                         videoList.add(Video(src, "Video", src, headers = videoHeaders))
@@ -403,13 +419,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         // Final Fallback for internal player (e.g. Gravity Falls)
         // If the video is not in an iframe but loaded dynamically on the page itself
         if (videoList.isEmpty()) {
-            val videoHeaders = headers.newBuilder()
-                .set("Referer", pageUrl)
-                .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
-                .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
-                .set("Sec-CH-UA-Mobile", "?1")
-                .set("Sec-CH-UA-Platform", "\"Android\"")
-                .build()
+            val videoHeaders = buildVideoHeaders(pageUrl)
                 
             try {
                 val extracted = UniversalExtractor(client).videosFromUrl(pageUrl, videoHeaders, prefix = "Internal Player")
