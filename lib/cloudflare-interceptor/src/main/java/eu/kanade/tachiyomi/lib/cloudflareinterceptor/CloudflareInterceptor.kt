@@ -26,7 +26,7 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
         val request = chain.request()
         val response = chain.proceed(request)
 
-        // Only act on Cloudflare challenges
+        // Check for Cloudflare challenge
         val isCloudflare = response.code in 403..503 && 
                 response.header("Server")?.contains("cloudflare", ignoreCase = true) == true
 
@@ -79,7 +79,6 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
         
         while (latch.count > 0 && System.currentTimeMillis() - start < 30000) {
             val currentClearance = getClearance(origUrl)
-            // Success ONLY if we have a clearance cookie AND it's different from the old one (if existed)
             if (currentClearance != null && currentClearance != oldClearance) {
                 latch.countDown()
                 break
@@ -93,21 +92,31 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
             webView = null
         }
 
-        // Sync cookies back to OkHttp
-        val finalCookies = cookieManager.getCookie(origUrl) ?: ""
-        finalCookies.split(";").forEach {
+        // Extract and sync all cookies
+        val finalCookieString = cookieManager.getCookie(origUrl) ?: ""
+        val cookies = finalCookieString.split(";").mapNotNull {
             val part = it.trim()
-            if (part.isNotEmpty()) {
-                Cookie.parse(request.url, "$part; Domain=${request.url.host}")?.let { cookie ->
-                    client.cookieJar.saveFromResponse(request.url, listOf(cookie))
-                }
-            }
+            if (part.isEmpty()) return@mapNotNull null
+            Cookie.parse(request.url, "$part; Domain=${request.url.host}")
+        }
+        
+        // Push to OkHttp CookieJar
+        cookies.forEach {
+            client.cookieJar.saveFromResponse(request.url, listOf(it))
         }
 
-        return request.newBuilder()
+        // Build new request with all required headers for modern Cloudflare
+        val newRequestBuilder = request.newBuilder()
             .header(BYPASS_HEADER, "1")
             .header("User-Agent", userAgent)
-            .build()
+            // Manual cookie injection for immediate consistency
+            .header("Cookie", finalCookieString)
+            // Add Client Hints (Sec-CH-UA) to match Chrome 121
+            .header("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
+            .header("Sec-CH-UA-Mobile", "?1")
+            .header("Sec-CH-UA-Platform", "\"Android\"")
+
+        return newRequestBuilder.build()
     }
 
     private fun getClearance(url: String): String? {
@@ -125,13 +134,16 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
         private val POLLING_SCRIPT = """
             (function() {
                 const interval = setInterval(() => {
-                    if (!document.querySelector('#challenge-form') && 
-                        !document.querySelector('#challenge-stage') &&
-                        !document.querySelector('#cf-challenge-running')) {
+                    const challengeGone = !document.querySelector('#challenge-form') && 
+                                          !document.querySelector('#challenge-stage') &&
+                                          !document.querySelector('#cf-challenge-running');
+                    
+                    if (challengeGone) {
                         window.CloudflareJSI.done();
                         clearInterval(interval);
                         return;
                     }
+
                     const turnstile = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
                     if (turnstile) {
                         try {
@@ -139,6 +151,7 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                             if (btn) btn.click();
                         } catch(e) {}
                     }
+                    
                     const btn = document.querySelector('#challenge-stage input[type="button"]');
                     if (btn) btn.click();
                 }, 2000);

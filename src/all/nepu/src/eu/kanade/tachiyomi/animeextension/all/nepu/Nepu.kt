@@ -277,20 +277,41 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                         
                         val videoHeaders = headers.newBuilder()
                             .set("Referer", pageUrl)
+                            .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
+                            .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
+                            .set("Sec-CH-UA-Mobile", "?1")
+                            .set("Sec-CH-UA-Platform", "\"Android\"")
                             .build()
 
+                        fun sanitize(url: String): String {
+                            return when {
+                                url.startsWith("http") -> url
+                                url.startsWith("//") -> "https:$url"
+                                url.startsWith("/") -> "$baseUrl$url"
+                                else -> "$baseUrl/$url"
+                            }.trim()
+                        }
+
                         if (!iframeUrl.isNullOrBlank()) {
-                            videoList.add(Video(iframeUrl!!, name, iframeUrl!!, headers = videoHeaders))
+                            val finalUrl = sanitize(iframeUrl)
+                            if (finalUrl.contains(".")) {
+                                videoList.add(Video(finalUrl, name, finalUrl, headers = videoHeaders))
+                            }
                         } else {
                             val videoSrc = embedDoc.selectFirst("video source")?.attr("abs:src")
                             if (!videoSrc.isNullOrBlank()) {
-                                videoList.add(Video(videoSrc!!, name, videoSrc!!, headers = videoHeaders))
+                                val finalUrl = sanitize(videoSrc)
+                                if (finalUrl.contains(".")) {
+                                    videoList.add(Video(finalUrl, name, finalUrl, headers = videoHeaders))
+                                }
                             } else {
                                 val fileMatch = Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)
                                 if (fileMatch != null) {
                                     val url = fileMatch.groupValues[1]
-                                    val absUrl = if (url.startsWith("http")) url else if (url.startsWith("//")) "https:$url" else if (url.startsWith("/")) "$baseUrl$url" else "$baseUrl/$url"
-                                    videoList.add(Video(absUrl, name, absUrl, headers = videoHeaders))
+                                    val finalUrl = sanitize(url)
+                                    if (finalUrl.contains(".")) {
+                                        videoList.add(Video(finalUrl, name, finalUrl, headers = videoHeaders))
+                                    }
                                 }
                             }
                         }
