@@ -248,12 +248,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     private fun buildVideoHeaders(refererUrl: String): okhttp3.Headers {
-        val referer = try {
-            val parsed = refererUrl.toHttpUrl()
-            "${parsed.scheme}://${parsed.host}/"
-        } catch (_: Exception) {
-            "$baseUrl/"
-        }
+        val referer = refererUrl.takeIf { it.startsWith("http") } ?: "$baseUrl/"
 
         val origin = try {
             val parsed = refererUrl.toHttpUrl()
@@ -266,9 +261,6 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             .set("Referer", referer)
             .set("Origin", origin)
             .set("Accept", "*/*")
-            .set("Sec-Fetch-Dest", "empty")
-            .set("Sec-Fetch-Mode", "cors")
-            .set("Sec-Fetch-Site", "cross-site")
             .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
             .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
             .set("Sec-CH-UA-Mobile", "?1")
