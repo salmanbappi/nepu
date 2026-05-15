@@ -262,6 +262,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val request = Request.Builder()
                     .url("$baseUrl/ajax/embed")
                     .post(postBody)
+                    .headers(headers)
                     .header("X-Requested-With", "XMLHttpRequest")
                     .header("Referer", pageUrl)
                     .header("Origin", baseUrl)

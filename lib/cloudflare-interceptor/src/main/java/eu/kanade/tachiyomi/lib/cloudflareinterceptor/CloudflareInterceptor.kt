@@ -42,7 +42,8 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
             val newRequest = resolveWithWebView(request)
             chain.proceed(newRequest)
         } catch (e: Exception) {
-            throw IOException(e)
+            // Re-throw as IOException for OkHttp
+            if (e is IOException) throw e else throw IOException(e)
         }
     }
 
@@ -58,7 +59,9 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
         val latch = CountDownLatch(1)
         val jsInterface = CloudflareJSI(latch)
         val origRequestUrl = request.url.toString()
-        val headers = request.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }.toMutableMap()
+        
+        // Ensure consistent User-Agent
+        val userAgent = request.header("User-Agent") ?: DEFAULT_USER_AGENT
         
         val cookieManager = CookieManager.getInstance()
         val oldCookie = getClearanceCookie(origRequestUrl)
@@ -74,7 +77,7 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                 databaseEnabled = true
                 useWideViewPort = true
                 loadWithOverviewMode = false
-                userAgentString = request.header("User-Agent")
+                userAgentString = userAgent
             }
 
             webview.addJavascriptInterface(jsInterface, "CloudflareJSI")
@@ -84,10 +87,16 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                 }
             }
 
-            webview.loadUrl(origRequestUrl, headers)
+            // Standard headers for WebView
+            val webViewHeaders = mutableMapOf(
+                "User-Agent" to userAgent
+            )
+            request.header("Referer")?.let { webViewHeaders["Referer"] = it }
+
+            webview.loadUrl(origRequestUrl, webViewHeaders)
         }
 
-        // Parallel polling for cookie changes
+        // Parallel polling for cookie changes (often faster than JS)
         val thread = Thread {
             val start = System.currentTimeMillis()
             while (latch.count > 0 && System.currentTimeMillis() - start < 30000) {
@@ -96,7 +105,7 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                     latch.countDown()
                     break
                 }
-                Thread.sleep(1500)
+                Thread.sleep(1000)
             }
         }.apply { start() }
 
@@ -108,17 +117,27 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
             webView = null
         }
 
-        // Extract and sync all cookies
+        // Extract and sync all cookies to OkHttp
         val cookieString = cookieManager.getCookie(origRequestUrl)
-        val cookies = parseCookies(request.url, cookieString)
-
-        cookies.forEach {
-            client.cookieJar.saveFromResponse(request.url, listOf(it))
+        if (cookieString != null) {
+            val cookies = cookieString.split(";").mapNotNull {
+                val parts = it.trim().split("=", limit = 2)
+                if (parts.size != 2) return@mapNotNull null
+                
+                // Use standard OkHttp Cookie parse logic by simulating Set-Cookie
+                Cookie.parse(request.url, "${parts[0]}=${parts[1]}; Domain=${request.url.host}")
+            }
+            
+            cookies.forEach {
+                client.cookieJar.saveFromResponse(request.url, listOf(it))
+            }
         }
 
+        // Build new request. We don't add the Cookie header manually because 
+        // OkHttp's CookieJar (which we just updated) will handle it.
         return request.newBuilder()
             .header(BYPASS_HEADER, "true")
-            .header("Cookie", cookies.joinToString("; ") { "${it.name}=${it.value}" })
+            .removeHeader("Cookie") // Let CookieJar provide the new cookies
             .build()
     }
 
@@ -130,23 +149,13 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
             ?.substringAfter("=")
     }
 
-    private fun parseCookies(url: HttpUrl, cookieString: String?): List<Cookie> {
-        if (cookieString == null) return emptyList()
-        return cookieString.split(";").mapNotNull {
-            val parts = it.trim().split("=", limit = 2)
-            if (parts.size != 2) return@mapNotNull null
-            Cookie.Builder()
-                .name(parts[0])
-                .value(parts[1])
-                .domain(url.host)
-                .build()
-        }
-    }
-
     companion object {
         private val ERROR_CODES = listOf(403, 503)
         private val SERVER_CHECK = arrayOf("cloudflare-nginx", "cloudflare")
         private const val BYPASS_HEADER = "X-Cloudflare-Bypass"
+        
+        // Modern Android Chrome UA
+        private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
 
         private val POLLING_SCRIPT = """
             (function() {
@@ -163,6 +172,7 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                         return;
                     }
 
+                    // Try checkbox
                     const turnstile = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
                     if (turnstile) {
                         try {
