@@ -80,7 +80,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = document.select(popularAnimeSelector()).map { popularAnimeFromElement(it) }
-        val hasNextPage = document.selectFirst(popularAnimeNextPageSelector()) != null || animes.size >= 20
+        val hasNextPage = (popularAnimeNextPageSelector()?.let { document.selectFirst(it) } != null) || animes.size >= 20
         return AnimesPage(animes, hasNextPage)
     }
 
