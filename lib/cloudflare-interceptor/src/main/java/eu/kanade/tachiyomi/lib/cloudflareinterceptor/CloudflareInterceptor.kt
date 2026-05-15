@@ -24,22 +24,20 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        val response = try {
-            chain.proceed(request)
-        } catch (e: Exception) {
-            // If DNS fails here, it's a real issue, but let's try to see if it's Cloudflare blocking
-            throw e
+        val response = chain.proceed(request)
+
+        // Only act on Cloudflare challenges (403/503)
+        if (response.code !in 403..503 || response.header("Server")?.contains("cloudflare", ignoreCase = true) != true) {
+            return response
         }
 
-        // Detect Cloudflare
-        val isCloudflare = response.code in 403..503 && 
-                response.header("Server")?.contains("cloudflare", ignoreCase = true) == true
-
-        if (!isCloudflare || request.header(BYPASS_HEADER) != null) {
+        // Avoid recursion
+        if (request.header(BYPASS_HEADER) != null) {
             return response
         }
 
         response.close()
+        
         val solvedRequest = resolveWithWebView(request)
         return chain.proceed(solvedRequest)
     }
@@ -62,30 +60,28 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                 userAgentString = userAgent
             }
 
+            wv.addJavascriptInterface(object {
+                @JavascriptInterface
+                fun done() { latch.countDown() }
+            }, "CloudflareJSI")
+
             wv.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     view?.evaluateJavascript(POLLING_SCRIPT) {}
                 }
             }
 
-            wv.addJavascriptInterface(object {
-                @JavascriptInterface
-                fun done() { latch.countDown() }
-            }, "CloudflareJSI")
-
-            val headers = mutableMapOf("User-Agent" to userAgent)
-            request.header("Referer")?.let { headers["Referer"] = it }
-            wv.loadUrl(origUrl, headers)
+            wv.loadUrl(origUrl)
         }
 
-        // Wait for solution
+        // Wait for challenge resolution (JS interface or Cookie check)
         val start = System.currentTimeMillis()
         val cookieManager = CookieManager.getInstance()
-        val oldCookie = cookieManager.getCookie(origUrl)
+        val oldCookie = cookieManager.getCookie(origUrl) ?: ""
         
         while (latch.count > 0 && System.currentTimeMillis() - start < 30000) {
-            val currentCookie = cookieManager.getCookie(origUrl)
-            if (currentCookie != null && currentCookie != oldCookie && currentCookie.contains("cf_clearance")) {
+            val currentCookie = cookieManager.getCookie(origUrl) ?: ""
+            if (currentCookie != oldCookie && currentCookie.contains("cf_clearance")) {
                 latch.countDown()
                 break
             }
@@ -94,26 +90,24 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
 
         handler.post {
             webView?.stopLoading()
-            webView?.clearHistory()
             webView?.destroy()
             webView = null
         }
 
-        // Re-extract and sync cookies
-        val finalCookieString = cookieManager.getCookie(origUrl) ?: ""
-        val cookies = finalCookieString.split(";").mapNotNull {
+        // Sync cookies back to OkHttp
+        val finalCookies = cookieManager.getCookie(origUrl) ?: ""
+        finalCookies.split(";").forEach {
             val part = it.trim()
-            if (part.isEmpty()) return@mapNotNull null
-            Cookie.parse(request.url, "$part; Domain=${request.url.host}")
-        }
-        
-        cookies.forEach {
-            client.cookieJar.saveFromResponse(request.url, listOf(it))
+            if (part.isNotEmpty()) {
+                Cookie.parse(request.url, "$part; Domain=${request.url.host}")?.let { cookie ->
+                    client.cookieJar.saveFromResponse(request.url, listOf(cookie))
+                }
+            }
         }
 
         return request.newBuilder()
             .header(BYPASS_HEADER, "1")
-            .header("User-Agent", userAgent) // Ensure UA is persisted
+            .header("User-Agent", userAgent)
             .build()
     }
 
@@ -124,13 +118,17 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
         private val POLLING_SCRIPT = """
             (function() {
                 const interval = setInterval(() => {
-                    if (!document.querySelector('#challenge-form') && 
-                        !document.querySelector('#challenge-stage') &&
-                        !document.querySelector('#cf-challenge-running')) {
+                    const challengeGone = !document.querySelector('#challenge-form') && 
+                                          !document.querySelector('#challenge-stage') &&
+                                          !document.querySelector('#cf-challenge-running');
+                    
+                    if (challengeGone) {
                         window.CloudflareJSI.done();
                         clearInterval(interval);
                         return;
                     }
+
+                    // Turnstile click
                     const turnstile = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
                     if (turnstile) {
                         try {
@@ -138,8 +136,11 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                             if (btn) btn.click();
                         } catch(e) {}
                     }
+                    
+                    // Simple button click
                     const btn = document.querySelector('#challenge-stage input[type="button"]');
                     if (btn) btn.click();
+
                 }, 2000);
             })();
         """.trimIndent()

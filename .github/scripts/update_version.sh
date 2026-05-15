@@ -6,7 +6,7 @@ if [ ! -f "$BUILD_GRADLE" ]; then
     exit 1
 fi
 
-# Extract current extVersionCode using a more robust regex
+# Extract current extVersionCode
 CURRENT_CODE=$(grep -E "extVersionCode\s*=\s*[0-9]+" "$BUILD_GRADLE" | grep -oE "[0-9]+")
 
 if [ -z "$CURRENT_CODE" ]; then
@@ -18,7 +18,7 @@ fi
 NEW_CODE=$((CURRENT_CODE + 1))
 NEW_VERSION="14.${NEW_CODE}"
 
-# Update build.gradle using a more precise sed command
+# Update build.gradle
 sed -i -E "s/(extVersionCode\s*=\s*)$CURRENT_CODE/\1$NEW_CODE/" "$BUILD_GRADLE"
 
 # Verify update
@@ -28,7 +28,10 @@ if [ "$UPDATED_CODE" != "$NEW_CODE" ]; then
     exit 1
 fi
 
-echo "NEW_CODE=$NEW_CODE" >> $GITHUB_ENV
-echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+# Export variables for GitHub Actions
+if [ -n "$GITHUB_ENV" ]; then
+    echo "NEW_CODE=$NEW_CODE" >> "$GITHUB_ENV"
+    echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+fi
 
-echo "Bumped extVersionCode from $CURRENT_CODE to $NEW_CODE (versionName will be $NEW_VERSION)"
+echo "Bumped extVersionCode from $CURRENT_CODE to $NEW_CODE (versionName: $NEW_VERSION)"
