@@ -9,7 +9,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import okhttp3.Cookie
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -27,17 +26,16 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
         val request = chain.request()
         val response = chain.proceed(request)
 
-        // Check if we are facing a Cloudflare challenge
-        val isChallenge = response.code in 403..503 && 
-            response.header("Server")?.contains("cloudflare", ignoreCase = true) == true
+        // Only act on Cloudflare challenges
+        val isCloudflare = response.code in 403..503 && 
+                response.header("Server")?.contains("cloudflare", ignoreCase = true) == true
 
-        if (!isChallenge || request.header(BYPASS_HEADER) != null) {
+        if (!isCloudflare || request.header(BYPASS_HEADER) != null) {
             return response
         }
 
         response.close()
         
-        // Solve the challenge and get a new request with updated cookies/headers
         val solvedRequest = resolveWithWebView(request)
         return chain.proceed(solvedRequest)
     }
@@ -58,8 +56,6 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
-                useWideViewPort = true
-                loadWithOverviewMode = false
                 userAgentString = userAgent
             }
 
@@ -74,22 +70,21 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                 }
             }
 
-            // Load the URL to trigger the challenge
             wv.loadUrl(origUrl)
         }
 
-        // Wait for solution: Either JS interface signals 'done' or cookies change
+        // Wait for challenge resolution
         val start = System.currentTimeMillis()
-        val oldCookie = cookieManager.getCookie(origUrl) ?: ""
+        val oldClearance = getClearance(origUrl)
         
         while (latch.count > 0 && System.currentTimeMillis() - start < 30000) {
-            val currentCookie = cookieManager.getCookie(origUrl) ?: ""
-            // Success if we get a NEW cf_clearance cookie
-            if (currentCookie != oldCookie && currentCookie.contains("cf_clearance")) {
+            val currentClearance = getClearance(origUrl)
+            // Success ONLY if we have a clearance cookie AND it's different from the old one (if existed)
+            if (currentClearance != null && currentClearance != oldClearance) {
                 latch.countDown()
                 break
             }
-            try { Thread.sleep(1000) } catch (e: Exception) {}
+            try { Thread.sleep(1500) } catch (e: Exception) {}
         }
 
         handler.post {
@@ -98,46 +93,45 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
             webView = null
         }
 
-        // --- THE BRIDGE: Sync WebView Cookies to OkHttp Client ---
-        val finalCookieString = cookieManager.getCookie(origUrl) ?: ""
-        if (finalCookieString.isNotEmpty()) {
-            val cookies = finalCookieString.split(";").mapNotNull {
-                val part = it.trim()
-                if (part.isEmpty()) return@mapNotNull null
-                // Parse the cookie string into an OkHttp Cookie object
-                Cookie.parse(request.url, "$part; Domain=${request.url.host}")
+        // Sync cookies back to OkHttp
+        val finalCookies = cookieManager.getCookie(origUrl) ?: ""
+        finalCookies.split(";").forEach {
+            val part = it.trim()
+            if (part.isNotEmpty()) {
+                Cookie.parse(request.url, "$part; Domain=${request.url.host}")?.let { cookie ->
+                    client.cookieJar.saveFromResponse(request.url, listOf(cookie))
+                }
             }
-            
-            // Save to the OkHttp client's shared CookieJar
-            client.cookieJar.saveFromResponse(request.url, cookies)
         }
 
-        // Return new request with the bypass header and synchronized User-Agent
         return request.newBuilder()
             .header(BYPASS_HEADER, "1")
             .header("User-Agent", userAgent)
             .build()
     }
 
+    private fun getClearance(url: String): String? {
+        return CookieManager.getInstance().getCookie(url)
+            ?.split(";")
+            ?.map { it.trim() }
+            ?.firstOrNull { it.startsWith("cf_clearance=") }
+            ?.substringAfter("=")
+    }
+
     companion object {
         private const val BYPASS_HEADER = "X-Cloudflare-Bypass"
         private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
 
-        // Script to detect when the challenge is gone and click Turnstile if needed
         private val POLLING_SCRIPT = """
             (function() {
                 const interval = setInterval(() => {
-                    const challengeGone = !document.querySelector('#challenge-form') && 
-                                          !document.querySelector('#challenge-stage') &&
-                                          !document.querySelector('#cf-challenge-running');
-                    
-                    if (challengeGone) {
+                    if (!document.querySelector('#challenge-form') && 
+                        !document.querySelector('#challenge-stage') &&
+                        !document.querySelector('#cf-challenge-running')) {
                         window.CloudflareJSI.done();
                         clearInterval(interval);
                         return;
                     }
-
-                    // Attempt to click Turnstile checkbox
                     const turnstile = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
                     if (turnstile) {
                         try {
@@ -145,11 +139,8 @@ class CloudflareInterceptor(private val client: OkHttpClient) : Interceptor {
                             if (btn) btn.click();
                         } catch(e) {}
                     }
-                    
-                    // Attempt to click simple "Verify" button
                     const btn = document.querySelector('#challenge-stage input[type="button"]');
                     if (btn) btn.click();
-
                 }, 2000);
             })();
         """.trimIndent()
