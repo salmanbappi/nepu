@@ -15,7 +15,7 @@ import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
-import eu.kanade.tachiyomi.lib.vidmolyextractor.VidmolyExtractor
+import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
 import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
@@ -334,10 +334,10 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                                 try {
                                     when {
                                         finalUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(finalUrl, "DoodStream"))
-                                        finalUrl.contains("filemoon") || finalUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(finalUrl, "Filemoon"))
-                                        finalUrl.contains("vidmoly") -> videoList.addAll(VidmolyExtractor(client).videosFromUrl(finalUrl, "Vidmoly"))
-                                        finalUrl.contains("vidhide") || finalUrl.contains("guccihide") || finalUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client).videosFromUrl(finalUrl, "VidHide"))
-                                        finalUrl.contains("voe") -> videoList.addAll(VoeExtractor(client).videosFromUrl(finalUrl, "Voe"))
+                                        finalUrl.contains("filemoon") || finalUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(finalUrl, "Filemoon", headers))
+                                        finalUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, headers).videosFromUrl(finalUrl, "VidMoly"))
+                                        finalUrl.contains("vidhide") || finalUrl.contains("guccihide") || finalUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(finalUrl, { "VidHide - $it" }))
+                                        finalUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, headers).videosFromUrl(finalUrl, "Voe"))
                                         finalUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(finalUrl, "StreamTape"))
                                         else -> {
                                             val extracted = UniversalExtractor(client).videosFromUrl(finalUrl, headers, prefix = name)
@@ -380,10 +380,10 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                         try {
                             when {
                                 src.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(src, "DoodStream"))
-                                src.contains("filemoon") || src.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(src, "Filemoon"))
-                                src.contains("vidmoly") -> videoList.addAll(VidmolyExtractor(client).videosFromUrl(src, "Vidmoly"))
-                                src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(VidHideExtractor(client).videosFromUrl(src, "VidHide"))
-                                src.contains("voe") -> videoList.addAll(VoeExtractor(client).videosFromUrl(src, "Voe"))
+                                src.contains("filemoon") || src.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(src, "Filemoon", videoHeaders))
+                                src.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly"))
+                                src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(src, { "VidHide - $it" }))
+                                src.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(src, "Voe"))
                                 src.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(src, "StreamTape"))
                                 else -> {
                                     val extracted = UniversalExtractor(client).videosFromUrl(src, videoHeaders, prefix = "Video")
